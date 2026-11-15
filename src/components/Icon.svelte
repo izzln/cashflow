@@ -26,6 +26,9 @@
     alignLeft: 'M4 6h16 M4 10h10 M4 14h16 M4 18h10',
     alignCenter: 'M4 6h16 M7 10h10 M4 14h16 M7 18h10',
     alignRight: 'M4 6h16 M10 10h10 M4 14h16 M10 18h10',
+    filter: 'M4 5.5h16l-6.2 7.3v5.2l-3.6 1.8v-7z',
+    grip: 'M9 7h.01 M15 7h.01 M9 12h.01 M15 12h.01 M9 17h.01 M15 17h.01',
+    close: 'M7 7l10 10 M17 7L7 17',
   } as const;
   export type IconName = keyof typeof ICONS;
 </script>

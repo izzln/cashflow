@@ -1,7 +1,7 @@
 import { isErr, type CellValue, type Evaluator } from './evaluate';
 import { parseNumber } from './format';
-import { cellRaw, cellValue, parseCell } from './columns';
-import { newEntry, newRow, type CashflowTable, type ColumnType, type Column, type DataTable, type Table } from './model';
+import { cellRaw, cellValue, matchCond, optionFor, parseCell } from './columns';
+import { newEntry, newRow, uid, type CashflowTable, type ColumnType, type Column, type DataTable, type Entry, type Table } from './model';
 import type { MonthKey } from './months';
 
 /** Cell position inside a table. r: body rows, then footer rows. c: column. */
@@ -20,7 +20,55 @@ export const FIXED_FOOTERS = [
   { id: '__balance', label: 'Balance' },
 ] as const;
 
-const TYPE_WIDTH: Record<ColumnType, number> = { date: 112, number: 120, text: 160, checkbox: 90, files: 190 };
+const TYPE_WIDTH: Record<ColumnType, number> = { date: 112, number: 120, text: 160, checkbox: 90, files: 190, numbering: 110, select: 140 };
+
+/**
+ * The rows a Table shows: all of them, or those passing its row filter while it is on.
+ * `keep` holds rows added while filtering, which stay in view until the filter changes.
+ */
+export function visibleEntries(t: DataTable, keep?: Set<string>): Entry[] {
+  const f = t.filter;
+  if (!f?.on || !f.rules.length) return t.entries;
+  return t.entries.filter((e) => {
+    if (keep?.has(e.id)) return true;
+    return f.any ? f.rules.some((c) => matchCond(e, t.columns, c)) : f.rules.every((c) => matchCond(e, t.columns, c));
+  });
+}
+
+export const isFiltered = (t: DataTable) => !!t.filter?.on && t.filter.rules.length > 0;
+
+/** A new Table row, with each Pop-Up Menu column's default choice. */
+export function newEntryFor(t: DataTable): Entry {
+  const e = newEntry();
+  for (const c of t.columns) {
+    if (c.type !== 'select' || !c.defaultOption) continue;
+    const o = c.options?.find((x) => x.id === c.defaultOption);
+    if (o) e.cells[c.id] = o.label;
+  }
+  return e;
+}
+
+/**
+ * Give every row of each Numbering column that has no number yet the next one, in table order.
+ * Numbers stick once given (sorting, moving or deleting rows never renumbers). Returns true if any changed.
+ */
+export function assignNumbers(t: DataTable): boolean {
+  let changed = false;
+  for (const c of t.columns) {
+    if (c.type !== 'numbering') continue;
+    let max = (c.numbering?.start ?? 1) - 1;
+    for (const e of t.entries) {
+      const v = e.cells[c.id];
+      if (typeof v === 'number' && v > max) max = v;
+    }
+    for (const e of t.entries) {
+      if (typeof e.cells[c.id] === 'number') continue;
+      e.cells[c.id] = ++max;
+      changed = true;
+    }
+  }
+  return changed;
+}
 
 /** Rough rendered width of a cell's text at 13px (CJK characters are about a full em). */
 export function textWidth(s: string, padding = 18): number {
@@ -210,57 +258,90 @@ export function cashflowModel(t: CashflowTable, months: MonthKey[], ev: Evaluato
   };
 }
 
-export function dataTableModel(t: DataTable, now = new Date()): GridModel {
-  const nb = t.entries.length;
+/**
+ * A Table's grid. Rows are the visible rows (see visibleEntries): row r is `rows[r]`, and writes go to
+ * that entry, so a filtered view edits the right rows. The Total row sums what is shown.
+ */
+export function dataTableModel(t: DataTable, now = new Date(), keep?: Set<string>): GridModel {
+  const rows = visibleEntries(t, keep);
+  const nb = rows.length;
+  const filtered = rows.length !== t.entries.length;
   const cols = t.columns;
   const total = (c: Column): string | number => {
     if (c.type === 'number') {
-      return t.entries.reduce((s, e) => {
+      return rows.reduce((s, e) => {
         const v = e.cells[c.id];
         return typeof v === 'number' ? Math.round((s + v) * 100) / 100 : s;
       }, 0);
     }
-    if (c.type === 'checkbox') return `${t.entries.filter((e) => e.cells[c.id] === true).length} ✓`;
+    if (c.type === 'checkbox') return `${rows.filter((e) => e.cells[c.id] === true).length} ✓`;
     return '';
+  };
+  /** Where a new row goes in t.entries for view position `at`. */
+  const realIndex = (at: number) => {
+    if (at < nb) return t.entries.indexOf(rows[at]);
+    return nb ? t.entries.indexOf(rows[nb - 1]) + 1 : t.entries.length;
   };
   return {
     rows: nb + 1,
     cols: cols.length,
     body: nb,
-    rowId: (r) => (r < nb ? t.entries[r].id : '__total'),
+    rowId: (r) => (r < nb ? rows[r].id : '__total'),
     colKey: (c) => cols[c]?.id ?? '',
     value(p) {
       const col = cols[p.c];
       if (!col) return null;
       if (p.r >= nb) {
         const v = total(col);
-        return p.c === 0 && v === '' ? `Total · ${nb}` : v;
+        return p.c === 0 && v === '' ? (filtered ? `Total · ${nb} of ${t.entries.length}` : `Total · ${nb}`) : v;
       }
-      return cellValue(col.type, t.entries[p.r].cells[col.id]);
+      return cellValue(col, rows[p.r].cells[col.id]);
     },
     raw(p) {
       const col = cols[p.c];
-      const e = t.entries[p.r];
+      const e = rows[p.r];
       return col && e ? cellRaw(col.type, e.cells[col.id]) : '';
     },
-    editable: (p) => (p.r < nb ? true : 'The total row is calculated.'),
+    editable(p) {
+      if (p.r >= nb) return 'The total row is calculated.';
+      if (cols[p.c]?.type === 'numbering') return 'Numbers are given out automatically.';
+      return true;
+    },
     set(p, text) {
       const col = cols[p.c];
-      const e = t.entries[p.r];
-      if (!col || !e || col.type === 'files') return true;
+      const e = rows[p.r];
+      if (!col || !e || col.type === 'files' || col.type === 'numbering') return true;
+      if (col.type === 'select') {
+        if (!text.trim()) {
+          delete e.cells[col.id];
+          return true;
+        }
+        // A value not in the menu yet becomes a new choice (as when pasting a list).
+        let label = optionFor(col, text);
+        if (!label) {
+          label = text.trim();
+          col.options = [...(col.options ?? []), { id: uid(), label }];
+        }
+        e.cells[col.id] = label;
+        return true;
+      }
       const v = parseCell(col.type, text, now);
       if (v === undefined) return false;
       if (v === null) delete e.cells[col.id];
       else e.cells[col.id] = v;
       return true;
     },
-    insertBodyRow: (at) => void t.entries.splice(at, 0, newEntry()),
+    insertBodyRow: (at) => {
+      const e = newEntryFor(t);
+      keep?.add(e.id);
+      t.entries.splice(realIndex(at), 0, e);
+    },
     alignRight: (c) => cols[c]?.type === 'number',
     cellType: (p) => (p.r >= nb ? 'calc' : (cols[p.c]?.type ?? 'text')),
-    isEmpty: (p) => p.r >= nb || !cols[p.c] || t.entries[p.r].cells[cols[p.c].id] === undefined,
+    isEmpty: (p) => p.r >= nb || !cols[p.c] || rows[p.r].cells[cols[p.c].id] === undefined,
   };
 }
 
-export function gridModel(t: Table, months: MonthKey[], ev: Evaluator): GridModel {
-  return t.kind === 'table' ? dataTableModel(t) : cashflowModel(t, months, ev);
+export function gridModel(t: Table, months: MonthKey[], ev: Evaluator, keep?: Set<string>): GridModel {
+  return t.kind === 'table' ? dataTableModel(t, new Date(), keep) : cashflowModel(t, months, ev);
 }

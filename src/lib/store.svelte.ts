@@ -19,6 +19,13 @@ import {
   type RowSource,
   type CellSource,
   type ColumnType,
+  type Column,
+  type Condition,
+  type Highlight,
+  type NumberFormat,
+  type Numbering,
+  type SelectOption,
+  defaultNumbering,
   type Filter,
   type Attachment,
   type Align,
@@ -43,6 +50,8 @@ import {
   FIXED_FOOTERS,
   gridModel,
   columnWidth,
+  assignNumbers,
+  visibleEntries,
   styleKey,
   type GridModel,
   type Pos,
@@ -180,6 +189,8 @@ class AppState {
 
   /** The files cell whose attachments popover is open. */
   filesCell = $state<{ tableId: string; rowId: string; colId: string } | null>(null);
+  /** The Pop-Up Menu cell whose choices are shown (editing a select cell). */
+  optionsCell = $state<{ tableId: string; rowId: string; colId: string } | null>(null);
   /** Keyed by row id, so edits arriving from another window can't shift it. */
   editing = $state<{ tableId: string; rowId: string; c: number } | null>(null);
   months = $state(visibleWindow());
@@ -232,7 +243,15 @@ class AppState {
   }
 
   model(t: Table): GridModel {
-    return gridModel(t, this.months, this.ev);
+    return gridModel(t, this.months, this.ev, this.keepRows);
+  }
+
+  /** Rows added while a filter is on stay in view until the filter changes. */
+  private keepRows = new Set<string>();
+
+  /** A table's body rows as shown: a Table's visible (filtered) entries, or a Cashflow's rows. */
+  viewItems(t: Table): { id: string }[] {
+    return t.kind === 'table' ? visibleEntries(t, this.keepRows) : t.rows;
   }
 
   /** Recompute the month window (call when the app regains focus; months roll off). */
@@ -265,6 +284,8 @@ class AppState {
     if (this.readonly) return;
     this.checkpoint();
     fn();
+    // Rows of Numbering columns that have no number yet get the next one.
+    for (const sh of this.wb.sheets) for (const t of sh.tables) if (t.kind === 'table') assignNumbers(t);
     this.save();
   }
 
@@ -303,7 +324,7 @@ class AppState {
     const sel = this.selection;
     const old = this.table(sel?.tableId);
     type Ref = { id: string } | { footer: number };
-    const oldItems = old ? bodyItems(old) : [];
+    const oldItems = old ? this.viewItems(old) : [];
     const ref = (r: number): Ref =>
       r < oldItems.length ? { id: oldItems[r].id } : { footer: r - oldItems.length };
     const refs = sel
@@ -316,7 +337,7 @@ class AppState {
     }
     const t = this.table(sel?.tableId);
     if (sel && refs && t) {
-      const items = bodyItems(t);
+      const items = this.viewItems(t);
       const toRow = (x: Ref, fallback: number) => {
         if ('footer' in x) return items.length + x.footer;
         const i = items.findIndex((row) => row.id === x.id);
@@ -893,18 +914,24 @@ class AppState {
   moveRows(tableId: string, indices: number[], to: number) {
     const t = this.table(tableId);
     if (!t || this.readonly) return;
-    const items = bodyItems(t) as { id: string }[];
+    // Indices are positions in the rows as shown (a filtered Table hides some).
+    const items = this.viewItems(t);
     const pick = [...new Set(indices)].filter((i) => i >= 0 && i < items.length).sort((a, b) => a - b);
     if (!pick.length) return;
     const ids = new Set(pick.map((i) => items[i].id));
     const before = pick.filter((i) => i < to).length;
     const target = Math.max(0, Math.min(items.length - pick.length, to - before));
     if (pick.every((i, k) => i === target + k)) return; // dropped where they already are
+    const shownRest = items.filter((x) => !ids.has(x.id));
     this.change(() => {
       const list = bodyItems(t) as { id: string }[];
       const moving = list.filter((x) => ids.has(x.id));
       const rest = list.filter((x) => !ids.has(x.id));
-      rest.splice(target, 0, ...moving);
+      // Insert before the shown row now at `target`, or after the last shown row.
+      const at = target < shownRest.length
+        ? rest.findIndex((x) => x.id === shownRest[target].id)
+        : shownRest.length ? rest.findIndex((x) => x.id === shownRest[shownRest.length - 1].id) + 1 : rest.length;
+      rest.splice(at < 0 ? rest.length : at, 0, ...moving);
       list.splice(0, list.length, ...rest);
     });
     const m = this.model(t);
@@ -941,7 +968,7 @@ class AppState {
   extractRows(tableId: string, indices: number[], x: number, y: number, copy: boolean) {
     const t = this.table(tableId);
     if (!t || this.readonly) return;
-    const items = bodyItems(t);
+    const items = this.viewItems(t);
     const pick = [...new Set(indices)].filter((i) => i >= 0 && i < items.length).sort((a, b) => a - b);
     if (!pick.length) return;
     const ids = new Set(pick.map((i) => items[i].id));
@@ -1052,7 +1079,7 @@ class AppState {
         if (ids.has(k.split('|')[0])) delete t.styles[k];
       }
     });
-    const left = bodyItems(t).length;
+    const left = this.model(t).body;
     this.select(t.id, { r: Math.min(Math.min(...rows), Math.max(0, left - 1)), c: sel.anchor.c });
   }
 
@@ -1060,14 +1087,20 @@ class AppState {
     const sel = this.selection;
     const t = this.table(sel?.tableId);
     if (!sel || !t) return;
-    const items = bodyItems(t);
+    const items = this.viewItems(t);
     const i = sel.anchor.r;
     const j = i + dir;
     if (i < 0 || j < 0 || i >= items.length || j >= items.length) return;
+    const a = items[i];
+    const b = items[j];
     this.change(() => {
-      const list = bodyItems(t) as unknown[];
-      const [row] = list.splice(i, 1);
-      list.splice(j, 0, row);
+      // Swap with the next shown row (rows hidden by a filter stay where they are).
+      const list = bodyItems(t) as { id: string }[];
+      const ia = list.findIndex((x) => x.id === a.id);
+      const ib = list.findIndex((x) => x.id === b.id);
+      const [x, y] = [list[ia], list[ib]];
+      list[ia] = y;
+      list[ib] = x;
     });
     this.select(t.id, { r: j, c: sel.anchor.c });
   }
@@ -1238,6 +1271,19 @@ class AppState {
       t.entries = [...keep, ...entries];
       t.importMap = map;
       t.importedFrom = fileName;
+      // Imported values of a Pop-Up Menu column become its choices; Numbering cells are numbered anew.
+      for (const col of t.columns) {
+        if (col.type === 'numbering') for (const e of entries) delete e.cells[col.id];
+        if (col.type !== 'select') continue;
+        const have = new Set((col.options ?? []).map((o) => o.label));
+        for (const e of entries) {
+          const v = e.cells[col.id];
+          if (typeof v === 'string' && v.trim() && !have.has(v)) {
+            have.add(v);
+            col.options = [...(col.options ?? []), { id: uid(), label: v }];
+          }
+        }
+      }
       if (mode === 'replace') {
         for (const k of Object.keys(t.styles)) if (!k.startsWith('__')) delete t.styles[k];
       }
@@ -1294,19 +1340,196 @@ class AppState {
     if (!t || t.kind !== 'table' || !col || col.type === type) return 0;
     let lost = 0;
     this.change(() => {
-      for (const e of t.entries) {
-        const v = e.cells[col.id];
-        if (v === undefined) continue;
-        const out = convertCell(col.type, type, v);
-        if (out === undefined) {
-          delete e.cells[col.id];
-          lost++;
-        } else e.cells[col.id] = out;
+      const from = $state.snapshot(col) as Column;
+      if (type === 'numbering') {
+        // Numbering replaces the values: rows are numbered in table order (by change()).
+        for (const e of t.entries) delete e.cells[col.id];
+        col.numbering ??= defaultNumbering();
+      } else {
+        for (const e of t.entries) {
+          const v = e.cells[col.id];
+          if (v === undefined) continue;
+          const out = convertCell(from, type, v);
+          if (out === undefined) {
+            delete e.cells[col.id];
+            lost++;
+          } else e.cells[col.id] = out;
+        }
+      }
+      if (type === 'select') {
+        // The values already there become the menu's choices, in order of first use.
+        const seen = new Map<string, SelectOption>();
+        for (const o of col.options ?? []) seen.set(o.label, o);
+        for (const e of t.entries) {
+          const v = e.cells[col.id];
+          if (typeof v === 'string' && v.trim() && !seen.has(v)) seen.set(v, { id: uid(), label: v });
+        }
+        col.options = [...seen.values()];
       }
       col.type = type;
     });
-    if (lost) this.flashNotice(`${lost} cell(s) couldn't be converted to ${COLUMN_TYPE_LABELS[type]} and were cleared (Undo brings them back).`);
+    if (type === 'numbering') this.flashNotice(`Numbered ${t.entries.length} row(s). Undo brings the old values back.`, 'info');
+    else if (lost) this.flashNotice(`${lost} cell(s) couldn't be converted to ${COLUMN_TYPE_LABELS[type]} and were cleared (Undo brings them back).`);
     return lost;
+  }
+
+  /** Change one column inside an undoable step. */
+  private editColumn(tableId: string, colId: string, fn: (col: Column, t: DataTable) => void) {
+    const t = this.table(tableId);
+    const col = t?.kind === 'table' ? t.columns.find((c) => c.id === colId) : undefined;
+    if (t?.kind !== 'table' || !col || this.readonly) return;
+    this.change(() => fn(col, t));
+  }
+
+  setNumberFormat(tableId: string, colId: string, format: NumberFormat) {
+    this.editColumn(tableId, colId, (col) => (col.format = { decimals: format.decimals, thousands: format.thousands }));
+  }
+
+  setNumbering(tableId: string, colId: string, numbering: Numbering) {
+    // A plain copy: the settings may hold reactive proxies, which structuredClone refuses.
+    this.editColumn(tableId, colId, (col) => (col.numbering = JSON.parse(JSON.stringify(numbering)) as Numbering));
+  }
+
+  /** Give every row a fresh number from the start, in the table's current order. */
+  renumber(tableId: string, colId: string) {
+    this.editColumn(tableId, colId, (col, t) => {
+      for (const e of t.entries) delete e.cells[col.id];
+    });
+  }
+
+  /**
+   * Replace a Pop-Up Menu's choices. A renamed choice renames it in every cell; a removed one is
+   * cleared from the cells that had it.
+   */
+  setOptions(tableId: string, colId: string, options: SelectOption[]) {
+    this.editColumn(tableId, colId, (col, t) => {
+      const before = new Map((col.options ?? []).map((o) => [o.id, o.label]));
+      const after = new Map(options.map((o) => [o.id, o.label]));
+      for (const e of t.entries) {
+        const v = e.cells[col.id];
+        if (typeof v !== 'string') continue;
+        const id = [...before].find(([, label]) => label === v)?.[0];
+        if (!id) continue;
+        const next = after.get(id);
+        if (next === undefined) delete e.cells[col.id];
+        else if (next !== v) e.cells[col.id] = next;
+      }
+      col.options = options.map((o) => ({ id: o.id, label: o.label }));
+      if (col.defaultOption && !after.has(col.defaultOption)) col.defaultOption = null;
+    });
+  }
+
+  setDefaultOption(tableId: string, colId: string, optionId: string | null) {
+    this.editColumn(tableId, colId, (col) => (col.defaultOption = optionId));
+  }
+
+  // ---------- conditional highlighting ----------
+
+  private editTable(tableId: string, fn: (t: DataTable) => void) {
+    const t = this.table(tableId);
+    if (t?.kind !== 'table' || this.readonly) return;
+    this.change(() => fn(t));
+  }
+
+  /** A blank condition on a column, with the first test its type offers. */
+  newCondition(t: DataTable, colId?: string): Condition {
+    const col = t.columns.find((c) => c.id === colId) ?? t.columns.find((c) => c.type === 'number') ?? t.columns[0];
+    const op = col.type === 'number' ? 'lt' : col.type === 'date' ? 'before' : col.type === 'checkbox' ? 'checked' : col.type === 'select' ? 'is' : 'contains';
+    return { id: uid(), col: col.id, op, value: col.type === 'number' ? '0' : '', value2: '' };
+  }
+
+  addHighlight(tableId: string) {
+    this.editTable(tableId, (t) => {
+      t.highlights ??= [];
+      t.highlights.push({ id: uid(), cond: this.newCondition(t), target: 'cell', style: 'red' });
+    });
+  }
+
+  updateHighlight(tableId: string, id: string, patch: Partial<Omit<Highlight, 'id' | 'cond'>> & { cond?: Partial<Condition> }) {
+    this.editTable(tableId, (t) => {
+      const h = t.highlights.find((x) => x.id === id);
+      if (!h) return;
+      if (patch.target) h.target = patch.target;
+      if (patch.style) h.style = patch.style;
+      if (patch.cond) Object.assign(h.cond, patch.cond);
+    });
+  }
+
+  removeHighlight(tableId: string, id: string) {
+    this.editTable(tableId, (t) => (t.highlights = t.highlights.filter((x) => x.id !== id)));
+  }
+
+  moveHighlight(tableId: string, from: number, to: number) {
+    this.editTable(tableId, (t) => {
+      const [h] = t.highlights.splice(from, 1);
+      if (h) t.highlights.splice(to, 0, h);
+    });
+  }
+
+  // ---------- row filter ----------
+
+  /** Where the filter popover is open: for a Table, anchored at a screen point, maybe on one column. */
+  filterUI = $state<{ tableId: string; x: number; y: number; colId?: string } | null>(null);
+
+  private editFilter(tableId: string, fn: (t: DataTable) => void) {
+    this.editTable(tableId, (t) => {
+      t.filter ??= { on: false, any: false, rules: [] };
+      fn(t);
+    });
+    // The rows shown change: forget rows kept in view and keep the selection inside the table.
+    this.keepRows.clear();
+    this.clampSelection();
+  }
+
+  setFilter(tableId: string, patch: { on?: boolean; any?: boolean }) {
+    this.editFilter(tableId, (t) => Object.assign(t.filter, patch));
+  }
+
+  addFilterRule(tableId: string, colId?: string) {
+    this.editFilter(tableId, (t) => {
+      t.filter.rules.push(this.newCondition(t, colId));
+      t.filter.on = true;
+    });
+  }
+
+  updateFilterRule(tableId: string, id: string, patch: Partial<Condition>) {
+    this.editFilter(tableId, (t) => {
+      const r = t.filter.rules.find((x) => x.id === id);
+      if (r) Object.assign(r, patch);
+    });
+  }
+
+  removeFilterRule(tableId: string, id: string) {
+    this.editFilter(tableId, (t) => (t.filter.rules = t.filter.rules.filter((x) => x.id !== id)));
+  }
+
+  /** Choose a Pop-Up Menu cell's value (null = blank). */
+  setChoice(tableId: string, rowId: string, colId: string, label: string | null) {
+    const t = this.table(tableId);
+    const e = t?.kind === 'table' ? t.entries.find((x) => x.id === rowId) : undefined;
+    if (!e || this.readonly) return;
+    if ((e.cells[colId] ?? null) === label) return;
+    this.change(() => {
+      if (label === null) delete e.cells[colId];
+      else e.cells[colId] = label;
+    });
+  }
+
+  /**
+   * Open the row filter for a Table (the focused one by default), anchored at a screen point or the
+   * toolbar's Filter button. With a column, a rule for it is added if there is none yet.
+   */
+  openFilter(tableId?: string | null, colId?: string, at?: { x: number; y: number }) {
+    const t = this.table(tableId ?? this.selection?.tableId ?? this.focusTableId);
+    if (t?.kind !== 'table') return;
+    this.menu = null;
+    let pt = at;
+    if (!pt) {
+      const b = document.querySelector<HTMLElement>('[data-tool="filter"]')?.getBoundingClientRect();
+      pt = b ? { x: b.right, y: b.bottom + 6 } : { x: window.innerWidth - 16, y: 64 };
+    }
+    if (colId && !this.readonly && !t.filter?.rules.some((r) => r.col === colId)) this.addFilterRule(t.id, colId);
+    this.filterUI = { tableId: t.id, x: pt.x, y: pt.y, colId };
   }
 
   /** Delete every column touched by the selection (a dataTable keeps at least one). */
@@ -1474,14 +1697,15 @@ class AppState {
     const sel = this.selection;
     const t = this.table(sel?.tableId);
     if (!sel || t?.kind !== 'table' || this.readonly) return;
+    const rows = visibleEntries(t, this.keepRows);
     const targets = (cells ?? cellsInRanges(sel.ranges)).filter(
-      (p) => p.r < t.entries.length && t.columns[p.c]?.type === 'checkbox',
+      (p) => p.r < rows.length && t.columns[p.c]?.type === 'checkbox',
     );
     if (!targets.length) return;
-    const on = targets.some((p) => t.entries[p.r].cells[t.columns[p.c].id] !== true);
+    const on = targets.some((p) => rows[p.r].cells[t.columns[p.c].id] !== true);
     this.change(() => {
       for (const p of targets) {
-        const e = t.entries[p.r];
+        const e = rows[p.r];
         if (on) e.cells[t.columns[p.c].id] = true;
         else delete e.cells[t.columns[p.c].id];
       }
@@ -1601,6 +1825,10 @@ class AppState {
       this.filesCell = { tableId: t.id, rowId: m.rowId(p.r), colId: m.colKey(p.c) };
       return;
     }
+    if (kind === 'select') {
+      this.optionsCell = { tableId: t.id, rowId: m.rowId(p.r), colId: m.colKey(p.c) };
+      return;
+    }
     if (seed === undefined && t.kind === 'cashflow' && p.c > 0 && t.cellSources[`${m.rowId(p.r)}|${m.colKey(p.c)}`]) {
       this.flashNotice('This cell shows a dataTable total. Type a number to replace it, or change it in the panel.');
     }
@@ -1625,7 +1853,9 @@ class AppState {
     el.style.top = `${(r.top - box.top) / z}px`;
     el.style.width = `${Math.max(r.width / z, right ? 140 : 0)}px`;
     el.style.height = `${r.height / z}px`;
-    el.style.textAlign = right ? 'right' : 'left';
+    // Edit with the cell's own alignment (as Numbers does): numbers right, aligned text as set.
+    const align = getComputedStyle(cell).textAlign;
+    el.style.textAlign = align === 'center' || align === 'right' || align === 'end' ? (align === 'end' ? 'right' : align) : right ? 'right' : 'left';
     return true;
   }
 
@@ -1699,7 +1929,7 @@ class AppState {
     if (m.raw(p) === text && (text !== '' || m.isEmpty(p))) return true;
     let ok = true;
     // Validate on a throwaway check first so an invalid entry doesn't create an undo step.
-    const probe = gridModel(structuredClone($state.snapshot(t)) as Table, this.months, this.ev);
+    const probe = gridModel(structuredClone($state.snapshot(t)) as Table, this.months, this.ev, this.keepRows);
     if (!probe.set(p, text)) return false;
     this.change(() => (ok = m.set(p, text)));
     return ok;
@@ -1715,7 +1945,7 @@ class AppState {
     this.change(() => {
       for (const p of cells) {
         const kind = m.cellType(p);
-        if ((kind === 'files' || kind === 'checkbox') && t.kind === 'table') delete t.entries[p.r].cells[t.columns[p.c].id];
+        if ((kind === 'files' || kind === 'checkbox') && t.kind === 'table') delete visibleEntries(t, this.keepRows)[p.r]?.cells[t.columns[p.c].id];
         else m.set(p, '');
       }
     });

@@ -1,10 +1,9 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { app, ROW_H, ROWTAB_W } from '../lib/store.svelte';
-  import { formatNumber } from '../lib/format';
-  import { cellsInRanges, columnWidth, dataTableModel, fitColumns, styleKey, textWidth, type ColFit } from '../lib/grid';
-  import { cellDisplay } from '../lib/columns';
-  import type { Attachment, DataTable } from '../lib/model';
+  import { cellsInRanges, columnWidth, fitColumns, isFiltered, styleKey, textWidth, type ColFit } from '../lib/grid';
+  import { cellDisplay, formatWith, matchCond } from '../lib/columns';
+  import type { Attachment, DataTable, Entry } from '../lib/model';
   import { STYLE_BY_ID } from '../lib/styles';
   import Icon from './Icon.svelte';
 
@@ -12,11 +11,37 @@
 
   const sel = $derived(app.selection?.tableId === table.id ? app.selection : null);
   const selected = $derived(new Set(sel ? cellsInRanges(sel.ranges).map((p) => `${p.r},${p.c}`) : []));
-  const nb = $derived(table.entries.length);
+  // The rows shown: all, or those passing the row filter (row r is rows[r]).
+  const rows = $derived.by(() => {
+    app.version;
+    return app.viewItems(table) as Entry[];
+  });
+  const nb = $derived(rows.length);
   const totals = $derived.by(() => {
     app.version;
-    const m = dataTableModel(table);
-    return table.columns.map((_, c) => m.value({ r: nb, c }));
+    const m = app.model(table);
+    return table.columns.map((_, c) => m.value({ r: m.body, c }));
+  });
+  const filtered = $derived(isFiltered(table));
+  /** Columns that have a filter rule (their header shows the filter button). */
+  const filterCols = $derived(new Set(filtered ? table.filter.rules.map((r) => r.col) : []));
+
+  /**
+   * Conditional highlighting: the tint for each cell of a row. Rules are tried in order and the first
+   * that matches a cell wins; a row rule tints every cell, a cell rule the cell in its column.
+   */
+  function highlightsFor(e: Entry): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const h of table.highlights ?? []) {
+      if (!matchCond(e, table.columns, h.cond)) continue;
+      const cols = h.target === 'row' ? table.columns.map((c) => c.id) : [h.cond.col];
+      for (const id of cols) out[id] ??= h.style;
+    }
+    return out;
+  }
+  const hl = $derived.by(() => {
+    app.version;
+    return new Map(rows.map((e) => [e.id, highlightsFor(e)]));
   });
 
   // Fill Window fits the columns to the available width (see fitColumns).
@@ -31,7 +56,7 @@
       let min = Math.max(56, textWidth(col.name));
       if (col.type === 'date') min = Math.max(min, textWidth('2026-11-07'));
       if (col.type === 'number') {
-        for (const e of table.entries) min = Math.max(min, textWidth(cellDisplay('number', e.cells[col.id])));
+        for (const e of rows) min = Math.max(min, textWidth(cellDisplay(col, e.cells[col.id])));
         min = Math.max(min, textWidth(String(totals[table.columns.indexOf(col)] ?? '')));
       }
       return { natural: Math.max(natural, min), min, wrap: false };
@@ -40,9 +65,10 @@
   });
   const wraps = (c: number) => fitting && (table.columns[c].type === 'text' || table.columns[c].type === 'files');
 
+  /** A cell's tint (conditional highlighting first, then its own) and alignment. */
   function style(rowId: string, colKey: string): string {
     const k = styleKey(rowId, colKey);
-    const s = STYLE_BY_ID[table.styles[k]];
+    const s = STYLE_BY_ID[hl.get(rowId)?.[colKey] ?? table.styles[k]];
     const a = table.aligns[k];
     return `${s ? `background:${s.bg};color:${s.fg};` : ''}${a ? `text-align:${a};` : ''}`;
   }
@@ -118,13 +144,21 @@
                 if (e.key === 'Escape') finish(false);
               }}
             />
-          {:else}{col.name}{/if}
+          {:else}
+            {col.name}
+            {#if !app.readonly}
+              <!-- Filter: shown on hover (pointer) and always while the column is filtered; touch uses the toolbar. -->
+              <button class="filterbtn" class:active={filterCols.has(col.id)} data-filter={col.id} tabindex="-1"
+                title={filterCols.has(col.id) ? 'Filtered — change the filter' : 'Filter rows by this column'}
+                aria-label={`Filter by ${col.name}`}><Icon name="filter" size={14} /></button>
+            {/if}
+          {/if}
         </th>
       {/each}
     </tr>
   </thead>
   <tbody>
-    {#each table.entries as e, r (e.id)}
+    {#each rows as e, r (e.id)}
       <tr style="height:{ROW_H}px">
         <th class="rowtab" class:on={onRows.has(r)} data-t={table.id} data-rowtab={r} aria-label={`Row ${r + 1}`}>{r + 1}</th>
         {#each table.columns as col, c (col.id)}
@@ -137,7 +171,8 @@
             class:center={col.type === 'checkbox'}
             class:header-col={c === 0}
             class:wrap={wraps(c)}
-            class:neg={col.type === 'number' && typeof v === 'number' && v < 0 && !table.styles[styleKey(e.id, col.id)]}
+            class:neg={col.type === 'number' && typeof v === 'number' && v < 0 && !table.styles[styleKey(e.id, col.id)] && !hl.get(e.id)?.[col.id]}
+            class:numbered={col.type === 'numbering'}
             class:sel={selected.has(`${r},${c}`)}
             class:anchor={anchor(r, c)}
             data-files={col.type === 'files' ? '' : undefined}
@@ -162,7 +197,9 @@
               <span class="check" class:on={v === true} data-check role="checkbox" aria-checked={v === true} aria-label={col.name}>{v === true ? '✓' : ''}</span>
             {:else if col.type === 'files'}
               {#each files(v) as f (f.id)}<span class="chip" title={f.name}><Icon name="clip" size={12} /> {f.name}</span>{/each}
-            {:else}{cellDisplay(col.type, v)}{/if}
+            {:else if col.type === 'select'}
+              {#if v !== undefined}<span class="pick">{v}</span>{/if}{#if anchor(r, c) && !app.readonly}<span class="caret" aria-hidden="true">▾</span>{/if}
+            {:else}{cellDisplay(col, v)}{/if}
           </td>
         {/each}
       </tr>
@@ -183,18 +220,74 @@
           class:sel={selected.has(`${nb},${c}`)}
           class:anchor={anchor(nb, c)}
           style={style('__total', col.id)}
-        >{typeof v === 'number' ? formatNumber(v) : (v ?? '')}</td>
+        >{typeof v === 'number' ? formatWith(v, col) : (v ?? '')}</td>
       {/each}
     </tr>
   </tfoot>
 </table>
 
 <style>
+  /* Filter button in a header cell: hover reveals it on pointer devices; an active filter keeps it shown. */
+  .filterbtn {
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-4);
+    background: var(--panel);
+    color: var(--muted);
+  }
+  :global(th.coltab) {
+    position: relative;
+  }
+  @media (hover: hover) {
+    :global(th.coltab:hover) .filterbtn {
+      display: inline-flex;
+    }
+  }
+  .filterbtn.active {
+    display: inline-flex;
+    color: var(--accent);
+  }
+  .pick {
+    display: inline-block;
+    max-width: calc(100% - 14px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+    background: var(--head);
+    border-radius: var(--radius-10);
+    padding: 0 8px;
+    line-height: 20px;
+  }
+  .caret {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 11px;
+  }
+  td.numbered {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Its own colours: the header around it is accent-filled while the column is selected. */
   .rename {
     min-height: 0;
     width: 100%;
     font: inherit;
     font-weight: 600;
+    color: var(--text);
+    background: var(--panel);
     border: 1px solid var(--accent);
     border-radius: var(--radius-4);
     padding: 1px 4px;

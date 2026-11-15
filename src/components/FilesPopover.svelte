@@ -17,7 +17,7 @@
     if (!target || typeof window === 'undefined') return '';
     const cell = document.querySelector<HTMLElement>(`td[data-t="${target.tableId}"][data-files]`);
     const rows = [...document.querySelectorAll<HTMLElement>(`td[data-t="${target.tableId}"]`)];
-    const entryIndex = table?.kind === 'table' ? table.entries.findIndex((e) => e.id === target.rowId) : -1;
+    const entryIndex = table ? app.viewItems(table).findIndex((e) => e.id === target.rowId) : -1;
     const col = table?.kind === 'table' ? table.columns.findIndex((c) => c.id === target.colId) : -1;
     const el = rows.find((td) => td.dataset.r === String(entryIndex) && td.dataset.c === String(col)) ?? cell;
     if (!el || app.sizeClass === 'compact') return '';

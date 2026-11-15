@@ -150,7 +150,7 @@
             <tr>
               {#each columns as col (col.id)}
                 {@const v = e.cells[col.id]}
-                <td class:right={col.type === 'number'} class:neg={typeof v === 'number' && v < 0}>{col.type === 'checkbox' ? (v ? '✓' : '') : cellDisplay(col.type, v)}</td>
+                <td class:right={col.type === 'number'} class:neg={typeof v === 'number' && v < 0}>{col.type === 'checkbox' ? (v ? '✓' : '') : cellDisplay(col, v)}</td>
               {/each}
             </tr>
           {/each}

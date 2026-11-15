@@ -1,6 +1,6 @@
 import { parseDate } from './dates';
 import { formatNumber, parseNumber } from './format';
-import type { Attachment, CellData, ColumnType, Entry, Filter, Column, DataTable } from './model';
+import type { Attachment, CellData, ColumnType, Condition, CondOp, Entry, Filter, Column, DataTable, Numbering } from './model';
 
 export const COLUMN_TYPE_LABELS: Record<ColumnType, string> = {
   date: 'Date',
@@ -8,7 +8,35 @@ export const COLUMN_TYPE_LABELS: Record<ColumnType, string> = {
   text: 'Text',
   checkbox: 'Checkbox',
   files: 'Files',
+  numbering: 'Numbering',
+  select: 'Pop-Up Menu',
 };
+
+// ---------- column formats ----------
+
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
+/** A number shown with a column's format (decimals: null = automatic, up to 2; thousands separator on/off). */
+export function formatWith(n: number, col?: Pick<Column, 'format'>): string {
+  const f = col?.format;
+  if (!f) return formatNumber(n);
+  const key = `${f.decimals}|${f.thousands}`;
+  let nf = numberFormats.get(key);
+  if (!nf) {
+    nf = new Intl.NumberFormat('en-US', {
+      useGrouping: f.thousands,
+      ...(f.decimals === null ? { maximumFractionDigits: 2 } : { minimumFractionDigits: f.decimals, maximumFractionDigits: f.decimals }),
+    });
+    numberFormats.set(key, nf);
+  }
+  return nf.format(Object.is(n, -0) ? 0 : n);
+}
+
+/** A Numbering column's text for row number `n`, e.g. "INV-0007". */
+export function numberingText(nb: Numbering | undefined, n: number): string {
+  if (!nb) return String(n);
+  return nb.parts.map((p) => (p.kind === 'text' ? p.text : String(n).padStart(p.digits, '0'))).join('');
+}
 
 const TRUE_WORDS = new Set(['true', 'yes', 'y', '1', 'x', '✓', '✔', '☑', '是', '对', '已', 'checked']);
 const FALSE_WORDS = new Set(['false', 'no', 'n', '0', '', '☐', '否', '不', 'unchecked']);
@@ -40,27 +68,123 @@ export function parseCell(type: ColumnType, text: string, now = new Date()): Cel
       return b === undefined ? undefined : b ? true : null;
     }
     case 'files':
-      return undefined; // files are added through the attachments popover, not typed
+    case 'numbering':
+      return undefined; // files come from the attachments popover; numbers are given out automatically
     default:
       return t === '' ? null : t;
   }
 }
 
 /** Raw value for copy and stats: numbers stay numbers. */
-export function cellValue(type: ColumnType, v: CellData | undefined): string | number | null {
+export function cellValue(col: Column, v: CellData | undefined): string | number | null {
+  const type = col.type;
   if (v === undefined) return type === 'checkbox' ? 'FALSE' : null;
   if (type === 'checkbox') return v === true ? 'TRUE' : 'FALSE';
   if (type === 'files') return (v as Attachment[]).map((a) => a.name).join(', ');
+  if (type === 'numbering') return numberingText(col.numbering, v as number);
   return v as string | number;
 }
 
 /** Text shown in the grid. */
-export function cellDisplay(type: ColumnType, v: CellData | undefined): string {
+export function cellDisplay(col: Column, v: CellData | undefined): string {
   if (v === undefined) return '';
-  if (type === 'number') return formatNumber(v as number);
-  if (type === 'files') return (v as Attachment[]).map((a) => a.name).join(', ');
-  if (type === 'checkbox') return '';
+  if (col.type === 'number') return formatWith(v as number, col);
+  if (col.type === 'numbering') return numberingText(col.numbering, v as number);
+  if (col.type === 'files') return (v as Attachment[]).map((a) => a.name).join(', ');
+  if (col.type === 'checkbox') return '';
   return String(v);
+}
+
+/** The option label matching typed or pasted text (any letter case), if there is one. */
+export function optionFor(col: Column, text: string): string | undefined {
+  const t = text.trim().toLowerCase();
+  return col.options?.find((o) => o.label.trim().toLowerCase() === t)?.label;
+}
+
+// ---------- conditions (row filters and conditional highlighting) ----------
+
+/** The tests offered for a column type, with their menu labels. */
+export function condOps(type: ColumnType): { op: CondOp; label: string }[] {
+  const empty = [
+    { op: 'empty' as const, label: 'is empty' },
+    { op: 'notEmpty' as const, label: 'is not empty' },
+  ];
+  switch (type) {
+    case 'number':
+      return [
+        { op: 'eq', label: '=' }, { op: 'ne', label: '≠' }, { op: 'gt', label: '>' }, { op: 'ge', label: '≥' },
+        { op: 'lt', label: '<' }, { op: 'le', label: '≤' }, { op: 'between', label: 'is between' }, ...empty,
+      ];
+    case 'date':
+      return [{ op: 'on', label: 'is on' }, { op: 'before', label: 'is before' }, { op: 'after', label: 'is after' }, { op: 'between', label: 'is between' }, ...empty];
+    case 'checkbox':
+      return [{ op: 'checked', label: 'is checked' }, { op: 'unchecked', label: 'is not checked' }];
+    case 'select':
+      return [{ op: 'is', label: 'is' }, { op: 'isNot', label: 'is not' }, ...empty];
+    default:
+      return [
+        { op: 'contains', label: 'contains' }, { op: 'notContains', label: 'does not contain' }, { op: 'is', label: 'is' },
+        { op: 'isNot', label: 'is not' }, { op: 'begins', label: 'starts with' }, { op: 'ends', label: 'ends with' }, ...empty,
+      ];
+  }
+}
+
+/** Tests that need no value. */
+export const NO_VALUE_OPS: CondOp[] = ['checked', 'unchecked', 'empty', 'notEmpty'];
+
+/** Does an entry pass a condition? Conditions on a missing column, or still without a value, pass. */
+export function matchCond(e: Entry, cols: Column[], c: Condition): boolean {
+  const col = cols.find((x) => x.id === c.col);
+  if (!col) return true;
+  const v = e.cells[col.id];
+  const isEmpty = v === undefined || (Array.isArray(v) && !v.length);
+  if (c.op === 'empty') return isEmpty;
+  if (c.op === 'notEmpty') return !isEmpty;
+  if (c.op === 'checked') return v === true;
+  if (c.op === 'unchecked') return v !== true;
+  if (!c.value.trim() && !(c.op === 'between' && c.value2.trim())) return true;
+  if (col.type === 'number') {
+    const n = typeof v === 'number' ? v : null;
+    const a = parseNumber(c.value);
+    const b = parseNumber(c.value2);
+    if (n === null) return c.op === 'ne';
+    if (typeof a !== 'number' && c.op !== 'between') return true;
+    const x = a as number;
+    switch (c.op) {
+      case 'eq': return n === x;
+      case 'ne': return n !== x;
+      case 'gt': return n > x;
+      case 'ge': return n >= x;
+      case 'lt': return n < x;
+      case 'le': return n <= x;
+      case 'between': return (typeof a !== 'number' || n >= a) && (typeof b !== 'number' || n <= b);
+      default: return true;
+    }
+  }
+  if (col.type === 'date') {
+    const d = typeof v === 'string' ? v : '';
+    const a = parseDate(c.value.trim(), 'mdy', new Date().getFullYear()) ?? '';
+    const b = parseDate(c.value2.trim(), 'mdy', new Date().getFullYear()) ?? '';
+    if (!d) return false;
+    switch (c.op) {
+      case 'on': return !a || d === a;
+      case 'before': return !a || d < a;
+      case 'after': return !a || d > a;
+      case 'between': return (!a || d >= a) && (!b || d <= b);
+      default: return true;
+    }
+  }
+  const text = norm(cellDisplay(col, v));
+  const q = norm(c.value);
+  switch (c.op) {
+    case 'contains': return text.includes(q);
+    case 'notContains': return !text.includes(q);
+    case 'is': return text === q;
+    case 'isNot': return text !== q;
+    case 'begins': return text.startsWith(q);
+    case 'ends': return text.endsWith(q);
+    default: return true;
+  }
 }
 
 /** Text to start the cell editor with. */
@@ -70,10 +194,10 @@ export function cellRaw(type: ColumnType, v: CellData | undefined): string {
 }
 
 /** Convert a value when a column changes type; undefined = can't keep it. */
-export function convertCell(from: ColumnType, to: ColumnType, v: CellData): CellData | undefined {
-  if (from === to) return v;
-  if (to === 'files' || from === 'files') return undefined;
-  const text = from === 'checkbox' ? (v ? 'true' : '') : String(v);
+export function convertCell(from: Column, to: ColumnType, v: CellData): CellData | undefined {
+  if (from.type === to) return v;
+  if (to === 'files' || from.type === 'files' || to === 'numbering') return undefined;
+  const text = from.type === 'checkbox' ? (v ? 'true' : '') : from.type === 'numbering' ? numberingText(from.numbering, v as number) : String(v);
   const out = parseCell(to, text);
   return out === null ? undefined : out;
 }

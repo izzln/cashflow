@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import MenuList from './MenuList.svelte';
-  import { commands, isEnabled, labelOf, run, shortcutText, type MenuItem } from '../lib/commands';
+  import { commands, isDestructive, isEnabled, labelOf, run, shortcutText, type MenuItem } from '../lib/commands';
 
   /**
    * A command menu (Stories: ContextMenu). Rows react to pointer and touch only: they highlight
@@ -49,7 +49,7 @@
         {@const c = commands[item]}
         {#if c}
           <li role="none">
-            <button role="menuitem" disabled={!isEnabled(c)} onclick={() => pick(item)} onpointerenter={() => (openSub = null)}>
+            <button role="menuitem" class:danger={isDestructive(c)} disabled={!isEnabled(c)} onclick={() => pick(item)} onpointerenter={() => (openSub = null)}>
               <span class="check">{c.checked?.() ? '✓' : ''}</span>
               <span class="label">{labelOf(c)}</span>
               <span class="keys">{shortcutText(c.keys)}</span>
@@ -128,6 +128,15 @@
   button:not(:disabled):active .keys,
   button[aria-expanded='true'] .keys {
     color: var(--on-accent-muted);
+  }
+  /* Destructive rows (Delete Row, Delete Table…): `neg` text; highlighted, a `neg` fill. */
+  button.danger {
+    color: var(--neg);
+  }
+  button.danger:not(:disabled):hover,
+  button.danger:not(:disabled):active {
+    background: var(--neg);
+    color: var(--on-accent);
   }
   .check {
     width: 14px;

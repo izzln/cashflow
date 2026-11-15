@@ -46,6 +46,15 @@ Stories Web App wins.** Don't copy its rules here; this file only adds what is s
   `formatsFromHTML`), `execCopy` / `pasteClipboard` in `commands.ts`, ⌘C/⌘X/⌘V and the `before*` events in App,
   `app.copiedText` / `copyReachedSystem` for the in-window fallback.
 - Size class: `app.sizeClass` from the measured container width (`app.width`); CSS uses `max-width: 599px`.
+- Column formats (Stories: DataTable): `Column.format` (number), `numbering` (parts + start; cells hold the row's
+  number, given once by `assignNumbers`, which `app.change()` runs on every Table), `options` / `defaultOption`
+  (Pop-Up Menu; cells hold the label; `newEntryFor` applies the default; `OptionsPopover` edits a cell).
+  Settings UI: `ColumnFormat`, ordered lists via `ReorderList`.
+- Conditions (`Condition`, `matchCond` / `condOps` in `columns.ts`) drive both `highlights` (first match wins, over the
+  cell's own tint; `HighlightRules`) and the row filter `filter` (`FilterPopover`, `app.openFilter`).
+- **Filtered Tables:** `dataTableModel` and the grid work on the shown rows (`visibleEntries`); row index r means
+  `app.viewItems(t)[r]`, never `t.entries[r]`. Row operations map shown rows to entry ids. Rows added while filtered
+  stay shown (`keepRows`) until the filter changes. The Total row sums shown rows; cashflow sources ignore filters.
 
 ## Commands
 - `npm test` (vitest, tests/), `npm run check` (svelte-check + worker tsc), `npm run build`

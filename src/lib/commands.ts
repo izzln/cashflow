@@ -29,8 +29,13 @@ export interface Command {
   native?: boolean;
   enabled?: () => boolean;
   checked?: () => boolean;
+  /** Removes something (a row, column, table or sheet): menus show it in `neg` (red). */
+  destructive?: boolean | (() => boolean);
   run: () => void | Promise<void>;
 }
+
+export const isDestructive = (c: Command | undefined): boolean =>
+  !!c && (typeof c.destructive === 'function' ? c.destructive() : !!c.destructive);
 
 const KEY_GLYPH: Record<string, string> = {
   ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Backspace: '⌫', Delete: '⌦', Enter: '↩', Escape: 'esc',
@@ -220,7 +225,7 @@ const list: Command[] = [
     await writeClipboard();
   } },
   { id: 'edit.paste', label: 'Paste', keys: { key: 'v', mod: true }, native: true, enabled: () => editable() && hasSel(), run: pasteClipboard },
-  { id: 'edit.delete', label: () => (tableSelectedOnly() ? deleteTableLabel() : linesSelected() ? 'Clear' : 'Delete'), keys: { key: 'Backspace' }, enabled: () => editable() && (hasSel() || tableSelectedOnly()), run: () => {
+  { id: 'edit.delete', destructive: () => tableSelectedOnly(), label: () => (tableSelectedOnly() ? deleteTableLabel() : linesSelected() ? 'Clear' : 'Delete'), keys: { key: 'Backspace' }, enabled: () => editable() && (hasSel() || tableSelectedOnly()), run: () => {
     if (tableSelectedOnly()) app.deleteTable(app.focusTableId!);
     else app.clearSelected();
   } },
@@ -231,7 +236,7 @@ const list: Command[] = [
   { id: 'sheet.duplicate', label: 'Duplicate Sheet', enabled: editable, run: () => app.duplicateSheet(app.activeSheetId) },
   { id: 'sheet.moveLeft', label: 'Move Left', enabled: () => editable() && app.wb.sheets[0]?.id !== app.activeSheetId, run: () => app.moveSheet(app.activeSheetId, -1) },
   { id: 'sheet.moveRight', label: 'Move Right', enabled: () => editable() && app.wb.sheets.at(-1)?.id !== app.activeSheetId, run: () => app.moveSheet(app.activeSheetId, 1) },
-  { id: 'sheet.delete', label: 'Delete Sheet', enabled: () => editable() && app.wb.sheets.length > 1, run: () => app.deleteSheet(app.activeSheetId) },
+  { id: 'sheet.delete', destructive: true, label: 'Delete Sheet', enabled: () => editable() && app.wb.sheets.length > 1, run: () => app.deleteSheet(app.activeSheetId) },
 
   // Insert
   { id: 'insert.cashflow', label: 'Cashflow', enabled: editable, run: () => app.addTable('cashflow') },
@@ -245,8 +250,8 @@ const list: Command[] = [
   // Table
   { id: 'table.rename', label: 'Rename', enabled: () => editable() && !!focusTable(), run: () => void (app.renamingTableId = focusTable()!.id) },
   { id: 'table.maximize', label: () => (app.maximizedId ? 'Restore Size' : 'Fill Window'), enabled: () => !!focusTable() || !!app.maximizedId, run: () => app.toggleMaximize() },
-  { id: 'table.deleteRows', label: () => (lineCount('row') === 1 ? 'Delete Row' : 'Delete Rows'), keys: { key: 'Backspace', mod: true, alt: true }, enabled: () => editable() && hasSel(), run: () => app.deleteSelectedRows() },
-  { id: 'table.deleteColumns', label: () => (lineCount('col') === 1 ? 'Delete Column' : 'Delete Columns'), enabled: () => editable() && hasSel() && dataTableFocused(), run: () => app.deleteSelectedColumns() },
+  { id: 'table.deleteRows', destructive: true, label: () => (lineCount('row') === 1 ? 'Delete Row' : 'Delete Rows'), keys: { key: 'Backspace', mod: true, alt: true }, enabled: () => editable() && hasSel(), run: () => app.deleteSelectedRows() },
+  { id: 'table.deleteColumns', destructive: true, label: () => (lineCount('col') === 1 ? 'Delete Column' : 'Delete Columns'), enabled: () => editable() && hasSel() && dataTableFocused(), run: () => app.deleteSelectedColumns() },
   { id: 'table.moveUp', label: 'Move Row Up', enabled: () => editable() && hasSel(), run: () => app.moveSelectedRow(-1) },
   { id: 'table.moveDown', label: 'Move Row Down', enabled: () => editable() && hasSel(), run: () => app.moveSelectedRow(1) },
   { id: 'table.renameColumn', label: 'Rename Column', enabled: () => editable() && dataTableFocused() && hasSel(), run: () => {
@@ -263,7 +268,7 @@ const list: Command[] = [
   } },
   { id: 'table.import', label: 'Import CSV or Excel…', enabled: () => editable() && dataTableFocused(), run: () => pickImportFile(focusTable()!.id) },
   { id: 'table.duplicate', label: 'Duplicate', enabled: () => editable() && !!focusTable(), run: () => app.duplicateTable(focusTable()!.id) },
-  { id: 'table.delete', label: () => deleteTableLabel(), enabled: () => editable() && !!focusTable(), run: () => app.deleteTable(focusTable()!.id) },
+  { id: 'table.delete', destructive: true, label: () => deleteTableLabel(), enabled: () => editable() && !!focusTable(), run: () => app.deleteTable(focusTable()!.id) },
 
   // Format
   ...STYLES.map<Command>((st) => ({
@@ -300,6 +305,9 @@ const list: Command[] = [
   { id: 'view.zoomIn', label: 'Zoom In', keys: { key: '>', mod: true, shift: true }, enabled: () => !!app.file && app.zoom < 4 && !app.maximizedId, run: () => app.zoomStep(1) },
   { id: 'view.zoomOut', label: 'Zoom Out', keys: { key: '<', mod: true, shift: true }, enabled: () => !!app.file && app.zoom > 0.25 && !app.maximizedId, run: () => app.zoomStep(-1) },
   { id: 'view.actualSize', label: 'Actual Size', enabled: () => !!app.file && app.zoom !== 1 && !app.maximizedId, run: () => void app.setZoom(1) },
+  { id: 'view.filter', label: 'Filter Rows…', enabled: () => focusTable()?.kind === 'table' && !app.readonly,
+    checked: () => { const t = focusTable(); return t?.kind === 'table' && !!t.filter?.on && t.filter.rules.length > 0; },
+    run: () => app.openFilter() },
   { id: 'view.inspector', label: 'Inspector', keys: { key: 'i', mod: true, alt: true }, checked: () => app.showInspector, run: () => void (app.showInspector = !app.showInspector) },
 ];
 

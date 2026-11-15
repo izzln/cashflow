@@ -6,6 +6,8 @@
   import { addMonths, currentMonth, monthLabel, monthRange, parseMonth } from '../lib/months';
   import { pickImportFile } from '../lib/commands';
   import SourcePicker from './SourcePicker.svelte';
+  import ColumnFormat from './ColumnFormat.svelte';
+  import HighlightRules from './HighlightRules.svelte';
   import { COLUMN_TYPE_LABELS } from '../lib/columns';
   import type { ColumnType } from '../lib/model';
 
@@ -188,6 +190,7 @@
           {#each Object.entries(COLUMN_TYPE_LABELS) as [k, v] (k)}<option value={k}>{v}</option>{/each}
         </select>
       </label>
+      <ColumnFormat table={t} {col} {ro} />
       {#if !ro}
         <div class="buttons">
           <button onclick={() => app.insertColumn(t.id, colSel.index)} title="⌥←">+ Column before</button>
@@ -198,7 +201,9 @@
         </div>
       {/if}
     {/if}
-    {#if !ro}<button class="danger" onclick={remove}>Delete table</button>{/if}
+    <h3>Conditional Highlighting</h3>
+    <HighlightRules table={t} {ro} />
+    {#if !ro}<h3>Table</h3><button class="danger" onclick={remove}>Delete table</button>{/if}
   {/if}
 
   {#if t && app.canAlign()}

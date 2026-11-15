@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { convertCell, matchesFilters, parseBool, parseCell } from '../src/lib/columns';
-import { normalizeWorkbook } from '../src/lib/model';
+import { normalizeWorkbook, type Column, type ColumnType } from '../src/lib/model';
 
 describe('dataTable cells', () => {
   it('parses values per column type', () => {
@@ -15,10 +15,12 @@ describe('dataTable cells', () => {
   });
 
   it('converts between types where it can', () => {
-    expect(convertCell('text', 'number', '12.5')).toBe(12.5);
-    expect(convertCell('text', 'number', 'abc')).toBeUndefined();
-    expect(convertCell('number', 'text', 3)).toBe('3');
-    expect(convertCell('text', 'checkbox', 'yes')).toBe(true);
+    const col = (type: ColumnType): Column => ({ id: 'c', name: 'C', type });
+    expect(convertCell(col('text'), 'number', '12.5')).toBe(12.5);
+    expect(convertCell(col('text'), 'number', 'abc')).toBeUndefined();
+    expect(convertCell(col('number'), 'text', 3)).toBe('3');
+    expect(convertCell(col('text'), 'checkbox', 'yes')).toBe(true);
+    expect(convertCell({ ...col('numbering'), numbering: { parts: [{ id: 'a', kind: 'text', text: 'INV-' }, { id: 'b', kind: 'seq', digits: 3 }], start: 1 } }, 'text', 7)).toBe('INV-007');
   });
 
   it('applies filters', () => {

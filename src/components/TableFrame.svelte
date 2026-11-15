@@ -2,7 +2,8 @@
   import { onMount, tick, type Snippet } from 'svelte';
   import { zoomFrom } from '../lib/motion';
   import { app, ROWTAB_W } from '../lib/store.svelte';
-  import { cellsInRanges, type Pos } from '../lib/grid';
+  import { cellsInRanges, isFiltered, type Pos } from '../lib/grid';
+  import Icon from './Icon.svelte';
   import type { Table } from '../lib/model';
 
   let { table, children, maximized = false }: { table: Table; children: Snippet; maximized?: boolean } = $props();
@@ -309,6 +310,16 @@
   }
 
   function onCellDown(e: PointerEvent) {
+    // A header's filter button opens the row filter on that column.
+    const fb = (e.target as Element).closest<HTMLElement>('[data-filter]');
+    if (fb) {
+      e.preventDefault();
+      e.stopPropagation();
+      app.commitEdit();
+      const r = fb.getBoundingClientRect();
+      app.openFilter(table.id, fb.dataset.filter, { x: r.right + 8, y: r.bottom + 6 });
+      return;
+    }
     if (onLineDown(e)) return;
     const p = posOf(e.target as Element);
     if (!p) return;
@@ -548,6 +559,15 @@
     {/if}
     {#if table.kind === 'cashflow'}<span class="kind">Cashflow</span>{/if}
     <span class="grow"></span>
+    {#if table.kind === 'table' && isFiltered(table)}
+      <!-- A filtered Table says so in its title; tap to change the filter. -->
+      <button class="filtered" title="Rows are filtered — change the filter"
+        onpointerdown={(e) => e.stopPropagation()}
+        onclick={(e) => {
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          app.openFilter(table.id, undefined, { x: r.right, y: r.bottom + 6 });
+        }}><Icon name="filter" size={14} /> {app.viewItems(table).length} of {table.entries.length}</button>
+    {/if}
     <button
       class="max-btn"
       onclick={() => app.toggleMaximize(table.id)}
@@ -678,6 +698,25 @@
   }
   .grow {
     flex: 1;
+  }
+  .filtered {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: none;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: var(--radius-10);
+    min-height: 22px;
+    padding: 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (pointer: coarse) {
+    .filtered {
+      min-height: var(--touch-target);
+    }
   }
   .max-btn {
     border: none;
