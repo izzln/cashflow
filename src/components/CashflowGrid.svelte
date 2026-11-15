@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, COL_W, LABEL_W, ROW_H, rowKind } from '../lib/store.svelte';
+  import { app, COL_W, LABEL_W, ROW_H, ROWTAB_W, rowKind } from '../lib/store.svelte';
   import { isErr, type CellValue } from '../lib/evaluate';
   import { formatNumber } from '../lib/format';
   import { cellsInRanges, FIXED_FOOTERS, fitColumns, styleKey, textWidth } from '../lib/grid';
@@ -32,9 +32,26 @@
     });
     return fitColumns(
       [{ natural: LABEL_W, min: 120, wrap: true }, ...monthMins.map((min) => ({ natural: Math.max(COL_W, min), min, wrap: false }))],
-      app.fillWidth - 2,
+      app.fillWidth - 2 - ROWTAB_W,
     );
   });
+
+  // Fully selected rows and columns light up their row tab / header cell (TableFrame handles the input).
+  const onRows = $derived(new Set(sel ? app.wholeLines(table.id, 'row') : []));
+  const onCols = $derived(new Set(sel ? app.wholeLines(table.id, 'col') : []));
+  /** Each year's first and last grid column (months start at column 1). */
+  const yearCols = $derived.by(() => {
+    let c = 1;
+    return years.map((y) => {
+      const span = { year: y.year, c0: c, c1: c + y.count - 1 };
+      c += y.count;
+      return span;
+    });
+  });
+  const yearOn = (c0: number, c1: number) => {
+    for (let c = c0; c <= c1; c++) if (!onCols.has(c)) return false;
+    return true;
+  };
 
   function style(rowId: string, colKey: string): string {
     const k = styleKey(rowId, colKey);
@@ -53,24 +70,33 @@
   const tip = (v: CellValue) => (isErr(v) ? v.err : undefined);
 </script>
 
-<table>
+<!-- An explicit width keeps table-layout: fixed in force, so columns keep their widths (and scroll) when they don't fit. -->
+<table style="width:{ROWTAB_W + widths.reduce((a, b) => a + b, 0)}px">
   <colgroup>
+    <col style="width:{ROWTAB_W}px" />
     <col style="width:{widths[0]}px" />
     {#each months as m, i (m)}<col style="width:{widths[i + 1]}px" />{/each}
   </colgroup>
   <thead>
+    <!-- Header rows are the column tabs: a month selects its column, a year all of its months,
+         the corner over the labels the label column; the far corner selects the whole table. -->
     <tr style="height:{ROW_H}px">
-      <th class="corner" rowspan="2"></th>
-      {#each years as y (y.year)}<th class="year center" colspan={y.count}>{y.year}</th>{/each}
+      <th class="rowtab corner" rowspan="2" data-t={table.id} data-tabcorner title="Select the whole table"></th>
+      <th class="corner coltab" rowspan="2" class:on={onCols.has(0)} data-t={table.id} data-coltab="0" title="Select the row labels"></th>
+      {#each yearCols as y (y.year)}
+        <th class="year center coltab" colspan={y.c1 - y.c0 + 1} class:on={yearOn(y.c0, y.c1)} data-t={table.id} data-years={`${y.c0}-${y.c1}`}
+          title={`Select ${y.year}`}>{y.year}</th>
+      {/each}
     </tr>
     <tr style="height:{ROW_H}px">
-      {#each months as m (m)}<th class="center">{monthLabel(m)}</th>{/each}
+      {#each months as m, i (m)}<th class="center coltab" class:on={onCols.has(i + 1)} data-t={table.id} data-coltab={i + 1}>{monthLabel(m)}</th>{/each}
     </tr>
   </thead>
   <tbody>
     {#each table.rows as row, r (row.id)}
       {@const kind = rowKind(row)}
       <tr style="height:{ROW_H}px">
+        <th class="rowtab" class:on={onRows.has(r)} data-t={table.id} data-rowtab={r} aria-label={`Row ${r + 1}`}>{r + 1}</th>
         <td
           data-t={table.id}
           data-r={r}
@@ -109,6 +135,7 @@
     {#each FIXED_FOOTERS as f, fi (f.id)}
       {@const r = nb + fi}
       <tr style="height:{ROW_H}px" class:first={fi === 0} class:balance={fi === 1}>
+        <th class="rowtab" class:on={onRows.has(r)} data-t={table.id} data-rowtab={r} aria-label={f.label}></th>
         <td data-t={table.id} data-r={r} data-c="0" class:sel={selected.has(`${r},0`)} class:anchor={anchor(r, 0)} style={style(f.id, 'label')}>{f.label}</td>
         {#each months as m, i (m)}
           {@const v = fi === 0 ? ev.cashFlow(table, m) : ev.balance(table, m)}
@@ -130,6 +157,7 @@
     {#each table.footers as f, fi (f.id)}
       {@const r = nb + FIXED_FOOTERS.length + fi}
       <tr style="height:{ROW_H}px" class="custom">
+        <th class="rowtab" class:on={onRows.has(r)} data-t={table.id} data-rowtab={r} aria-label={f.label}></th>
         <td data-t={table.id} data-r={r} data-c="0" class:sel={selected.has(`${r},0`)} class:anchor={anchor(r, 0)} style={style(f.id, 'label')} title={`Formula: ${f.formula}`}><span class="icon fx">ƒ</span>{f.label}</td>
         {#each months as m, i (m)}
           {@const v = ev.footer(table, f, m)}

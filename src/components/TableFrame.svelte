@@ -1,24 +1,21 @@
 <script lang="ts">
   import { onMount, tick, type Snippet } from 'svelte';
   import { zoomFrom } from '../lib/motion';
-  import { app } from '../lib/store.svelte';
+  import { app, ROWTAB_W } from '../lib/store.svelte';
   import { cellsInRanges, type Pos } from '../lib/grid';
   import type { Table } from '../lib/model';
-  import TableTabs from './TableTabs.svelte';
 
   let { table, children, maximized = false }: { table: Table; children: Snippet; maximized?: boolean } = $props();
   let frameEl = $state<HTMLElement | null>(null);
   let bodyWidth = $state(0);
   let bodyEl = $state<HTMLElement | null>(null);
-  let pinsEl = $state<HTMLElement | null>(null);
   let cardEl = $state<HTMLElement | null>(null);
   // Fill Window / Restore: zoom from where the table was (Stories: Motion).
   onMount(() => {
     const from = app.fillFrom;
     if (!from || from.id !== table.id || !cardEl) return;
     app.fillFrom = null;
-    const anim = zoomFrom(cardEl, from.rect, maximized ? 1 : app.zoom);
-    anim?.finished.then(() => app.layoutTick++, () => app.layoutTick++);
+    zoomFrom(cardEl, from.rect, maximized ? 1 : app.zoom);
   });
   $effect(() => {
     if (maximized) app.fillWidth = bodyWidth;
@@ -84,7 +81,235 @@
     return { r: Number(cell.dataset.r), c: Number(cell.dataset.c) };
   }
 
+  // ----- row tabs and the header row (the column tabs) -----
+  // Click/tap selects the row or column (Shift extends); drag reorders; drag a row off the table
+  // onto the canvas makes a new table (⌥ copies). Touch: a tap on a selected line shows its edit
+  // menu, long-press opens the context menu, double-tap a column header renames it.
+
+  type Hit = { kind: 'corner' } | { kind: 'years'; c0: number; c1: number } | { kind: 'line'; axis: 'row' | 'col'; i: number; el: HTMLElement };
+
+  function hitOf(el: Element | null): Hit | null {
+    const th = el?.closest<HTMLElement>('[data-rowtab], [data-coltab], [data-years], [data-tabcorner]');
+    if (!th || th.dataset.t !== table.id || th.querySelector('input')) return null;
+    if (th.dataset.tabcorner !== undefined) return { kind: 'corner' };
+    if (th.dataset.years) {
+      const [c0, c1] = th.dataset.years.split('-').map(Number);
+      return { kind: 'years', c0, c1 };
+    }
+    if (th.dataset.rowtab !== undefined) return { kind: 'line', axis: 'row', i: Number(th.dataset.rowtab), el: th };
+    return { kind: 'line', axis: 'col', i: Number(th.dataset.coltab), el: th };
+  }
+
+  const bodyRows = () => (table.kind === 'table' ? table.entries.length : table.rows.length);
+  const scale = () => (maximized ? 1 : app.zoom);
+
+  let line = $state<{
+    axis: 'row' | 'col';
+    lines: number[];
+    x0: number;
+    y0: number;
+    moved: boolean;
+    outside: boolean;
+    to: number;
+    /** Drop line, in the card's unscaled pixels. */
+    marker: { x: number; y: number; w: number; h: number } | null;
+    pointer: string;
+    showMenu: boolean;
+    el: HTMLElement;
+    i: number;
+  } | null>(null);
+  let linePress: ReturnType<typeof setTimeout> | null = null;
+  let linePressed = false;
+  let lastHeaderTap: { c: number; at: number } | null = null;
+
+  /** Rectangles (screen pixels) of the lines a drag can drop between. */
+  function targets(axis: 'row' | 'col'): DOMRect[] {
+    if (axis === 'row') {
+      const n = bodyRows();
+      return [...(frameEl?.querySelectorAll<HTMLElement>('tbody [data-rowtab]') ?? [])].slice(0, n).map((el) => el.getBoundingClientRect());
+    }
+    return [...(frameEl?.querySelectorAll<HTMLElement>('thead [data-coltab]') ?? [])].map((el) => el.getBoundingClientRect());
+  }
+
+  /** In Fill Window: the visible part of the body, below the pinned header rows and right of the pinned columns. */
+  function visibleBox() {
+    const b = bodyEl!.getBoundingClientRect();
+    const heads = [...(bodyEl!.querySelectorAll<HTMLElement>('thead th'))].map((th) => th.getBoundingClientRect().bottom);
+    const first = bodyEl!.querySelector<HTMLElement>('tbody td[data-c="0"]')?.getBoundingClientRect();
+    const tabs = b.left + ROWTAB_W;
+    return {
+      top: Math.max(b.top, ...heads),
+      bottom: b.top + bodyEl!.clientHeight,
+      /** Right of the pinned first column: columns scroll in from here. */
+      left: Math.max(tabs, first?.right ?? tabs),
+      /** Right of the row tabs: the pinned first column is still a drop target. */
+      tabs,
+      right: b.left + bodyEl!.clientWidth,
+    };
+  }
+
+  function onLineDown(e: PointerEvent): boolean {
+    const hit = hitOf(e.target as Element);
+    if (!hit) return false;
+    if (e.button === 2) return true; // right-click: the contextmenu event handles it
+    e.preventDefault();
+    app.commitEdit();
+    const closedMenu = app.menuClosedAt === e.timeStamp;
+    app.menu = null;
+    if (hit.kind === 'corner') {
+      app.select(table.id, { r: 0, c: 0 });
+      app.selectAll();
+      return true;
+    }
+    if (hit.kind === 'years') {
+      app.selectLines(table.id, 'col', hit.c0, hit.c1);
+      return true;
+    }
+    const { axis, i } = hit;
+    const showMenu = app.wholeLines(table.id, axis).includes(i) && !e.shiftKey && !closedMenu;
+    if (!app.wholeLines(table.id, axis).includes(i) || e.shiftKey) app.selectLines(table.id, axis, i, i, e.shiftKey);
+    const lines = app.wholeLines(table.id, axis);
+    const draggable = !app.readonly && (axis === 'row' ? lines.every((r) => r < bodyRows()) : table.kind === 'table');
+    line = {
+      axis, lines: draggable ? lines : [], x0: e.clientX, y0: e.clientY, moved: false, outside: false, to: -1, marker: null,
+      pointer: e.pointerType, showMenu, el: hit.el, i,
+    };
+    linePressed = false;
+    if (e.pointerType === 'touch') {
+      const { clientX, clientY } = e;
+      linePress = setTimeout(() => {
+        if (!line || line.moved) return;
+        linePressed = true;
+        openMenu('context', axis === 'row' ? 'rows' : 'columns', clientX, clientY);
+      }, 550);
+    }
+    window.addEventListener('pointermove', onLineMove);
+    window.addEventListener('pointerup', onLineUp, { once: true });
+    window.addEventListener('pointercancel', onLineCancel, { once: true });
+    return true;
+  }
+
+  function onLineMove(e: PointerEvent) {
+    const d = line;
+    if (!d || !d.lines.length || !cardEl) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 5) return;
+    d.moved = true;
+    if (linePress) clearTimeout(linePress);
+    const t = cardEl.getBoundingClientRect();
+    const m = 28;
+    d.outside = !maximized && (e.clientX < t.left - m || e.clientX > t.right + m || e.clientY < t.top - m || e.clientY > t.bottom + m);
+    if (d.outside) {
+      d.marker = null;
+      const n = d.lines.length;
+      app.lineGhost = {
+        x: e.clientX,
+        y: e.clientY,
+        text: `New ${table.kind === 'table' ? 'table' : 'cashflow'} with ${n} ${d.axis === 'row' ? 'row' : 'column'}${n === 1 ? '' : 's'}`,
+      };
+      return;
+    }
+    app.lineGhost = null;
+    if (maximized) autoScroll(e.clientX, e.clientY);
+    place(e.clientX, e.clientY);
+  }
+
+  /** Where a drag at (x, y) would drop, and the drop line for it. */
+  function place(x: number, y: number) {
+    const d = line;
+    if (!d || !cardEl) return;
+    if (maximized && bodyEl) {
+      const v = visibleBox();
+      x = Math.min(Math.max(x, v.tabs), v.right);
+      y = Math.min(Math.max(y, v.top), v.bottom);
+    }
+    const rects = targets(d.axis);
+    if (!rects.length) return;
+    const card = cardEl.getBoundingClientRect();
+    const z = scale();
+    const grid = (frameEl?.querySelector('table') ?? cardEl).getBoundingClientRect();
+    let to = rects.length;
+    if (d.axis === 'row') {
+      for (const [k, r] of rects.entries()) if (y < r.top + r.height / 2) { to = k; break; }
+      const at = to < rects.length ? rects[to].top : rects[rects.length - 1].bottom;
+      d.marker = { x: (grid.left - card.left) / z, y: (at - card.top) / z - 1, w: Math.min(grid.width, card.width) / z, h: 3 };
+    } else {
+      for (const [k, r] of rects.entries()) if (x < r.left + r.width / 2) { to = k; break; }
+      const at = to < rects.length ? rects[to].left : rects[rects.length - 1].right;
+      d.marker = { x: (at - card.left) / z - 1, y: (grid.top - card.top) / z, w: 3, h: Math.min(grid.height, card.height) / z };
+    }
+    d.to = to;
+  }
+
+  // Fill Window: holding a drag near the body's edge scrolls it.
+  let scrollRaf = 0;
+  function autoScroll(x: number, y: number) {
+    cancelAnimationFrame(scrollRaf);
+    const d = line;
+    if (!d || !bodyEl) return;
+    const v = visibleBox();
+    const edge = 28;
+    const dy = d.axis === 'row' ? (y < v.top + edge ? -1 : y > v.bottom - edge ? 1 : 0) : 0;
+    const dx = d.axis === 'col' ? (x < v.left + edge ? -1 : x > v.right - edge ? 1 : 0) : 0;
+    if (!dx && !dy) return;
+    const step = () => {
+      if (!line || !bodyEl) return;
+      bodyEl.scrollBy(dx * 14, dy * 14);
+      place(x, y);
+      scrollRaf = requestAnimationFrame(step);
+    };
+    scrollRaf = requestAnimationFrame(step);
+  }
+
+  function endLine() {
+    window.removeEventListener('pointermove', onLineMove);
+    window.removeEventListener('pointercancel', onLineCancel);
+    cancelAnimationFrame(scrollRaf);
+    if (linePress) clearTimeout(linePress);
+    linePress = null;
+    app.lineGhost = null;
+    const d = line;
+    line = null;
+    return d;
+  }
+
+  function onLineCancel() {
+    window.removeEventListener('pointerup', onLineUp);
+    endLine();
+  }
+
+  function onLineUp(e: PointerEvent) {
+    const d = endLine();
+    if (!d || linePressed) return;
+    if (!d.moved) {
+      if (d.pointer !== 'touch') return;
+      // Touch, as in Numbers: double-tap a column header to rename it; a tap on a selected line shows its menu.
+      if (d.axis === 'col' && table.kind === 'table' && !app.readonly && lastHeaderTap?.c === d.i && e.timeStamp - lastHeaderTap.at < 350) {
+        lastHeaderTap = null;
+        app.renamingColumn = { tableId: table.id, colId: table.columns[d.i].id };
+        return;
+      }
+      lastHeaderTap = d.axis === 'col' ? { c: d.i, at: e.timeStamp } : null;
+      if (d.showMenu) {
+        const r = d.el.getBoundingClientRect();
+        openMenu('edit', d.axis === 'row' ? 'rows' : 'columns', r.left + Math.min(r.width, 200) / 2, r.top);
+      }
+      return;
+    }
+    if (d.outside) {
+      // Drop point in unzoomed canvas pixels.
+      const content = app.contentEl?.getBoundingClientRect();
+      const x = (e.clientX - (content?.left ?? 0)) / app.zoom - 20;
+      const y = (e.clientY - (content?.top ?? 0)) / app.zoom - 20;
+      if (d.axis === 'row') app.extractRows(table.id, d.lines, x, y, e.altKey);
+      else app.extractColumns(table.id, d.lines, x, y, e.altKey);
+    } else if (d.to >= 0) {
+      if (d.axis === 'row') app.moveRows(table.id, d.lines, d.to);
+      else app.moveColumns(table.id, d.lines, d.to);
+    }
+  }
+
   function onCellDown(e: PointerEvent) {
+    if (onLineDown(e)) return;
     const p = posOf(e.target as Element);
     if (!p) return;
     if (app.editing) app.commitEdit();
@@ -190,6 +415,14 @@
 
   function onContextMenu(e: MouseEvent) {
     e.preventDefault();
+    const hit = hitOf(e.target as Element);
+    if (hit?.kind === 'line') {
+      // Right-click on a row tab or a header: select it (unless already) and show its menu.
+      if (app.editing) app.commitEdit();
+      if (!app.wholeLines(table.id, hit.axis).includes(hit.i)) app.selectLines(table.id, hit.axis, hit.i);
+      openMenu('context', hit.axis === 'row' ? 'rows' : 'columns', e.clientX, e.clientY);
+      return;
+    }
     const p = posOf(e.target as Element);
     if (!p) return;
     if (app.editing) app.commitEdit();
@@ -327,7 +560,7 @@
     class="body"
     bind:this={bodyEl}
     bind:clientWidth={bodyWidth}
-    style="--row-h:28px"
+    style="--row-h:28px;--rowtab-w:{ROWTAB_W}px"
     class:has-sel={!!sel}
     onpointerdown={onCellDown}
     onpointerup={onTouchUp}
@@ -340,11 +573,8 @@
   >
     {@render children()}
   </div>
-  {#if maximized}
-    <!-- Fill Window: row and column tabs in a fixed gutter, following the body's scroll. -->
-    <div class="pins" bind:this={pinsEl}>
-      {#if pinsEl && bodyEl}<TableTabs {table} layer={pinsEl} pinned scroller={bodyEl} />{/if}
-    </div>
+  {#if line?.moved && line.marker && !line.outside}
+    <div class="marker" style="left:{line.marker.x}px;top:{line.marker.y}px;width:{line.marker.w}px;height:{line.marker.h}px"></div>
   {/if}
 </div>
 </div>
@@ -367,18 +597,15 @@
   .frame.max .body {
     flex: 1;
     min-height: 0;
-    /* Room for the pinned row and column tabs. */
-    margin: calc(var(--col-tab) + 6px) 0 0 calc(var(--row-tab) + 6px);
-    border-top: 1px solid var(--line);
-    border-left: 1px solid var(--line);
     overflow: auto;
     -webkit-overflow-scrolling: touch;
   }
   /* Filled view: header rows and the header column stay put while scrolling. */
+  /* Layers: body cells < header column (1) < row tabs (2) < header rows (3) < their pinned corners (4, 5). */
   .frame.max .body :global(thead th) {
     position: sticky;
     top: 0;
-    z-index: 2;
+    z-index: 3;
   }
   .frame.max .body :global(thead tr:nth-child(2) th) {
     top: var(--row-h);
@@ -392,35 +619,62 @@
     padding-top: 4px;
     padding-bottom: 4px;
   }
-  .frame.max .body :global(td.header-col),
-  .frame.max .body :global(tfoot td:first-child) {
+  /* Fill Window: the row tabs and the header column stay put while scrolling sideways. */
+  .frame.max .body :global(.rowtab) {
     position: sticky;
     left: 0;
+    z-index: 2;
+  }
+  .frame.max .body :global(td.header-col),
+  .frame.max .body :global(tfoot td[data-c='0']) {
+    position: sticky;
+    left: var(--rowtab-w);
     z-index: 1;
   }
-  .frame.max .body :global(th.corner),
-  .frame.max .body :global(thead th:first-child) {
-    left: 0;
-    z-index: 3;
+  .frame.max .body :global(thead th[data-coltab='0']) {
+    left: var(--rowtab-w);
+    z-index: 4;
   }
-  .frame {
-    --row-tab: 20px;
-    --col-tab: 15px;
+  .frame.max .body :global(thead th.rowtab) {
+    z-index: 5;
   }
-  @media (pointer: coarse) {
-    .frame {
-      --row-tab: 30px;
-      --col-tab: 23px;
-    }
+  /* Row tabs: the first column of every table (row numbers). */
+  .body :global(.rowtab) {
+    padding: 0;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    background: var(--head);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
   }
-  .pins {
+  .body :global(tfoot .rowtab),
+  .body :global(thead .rowtab) {
+    cursor: default;
+  }
+  /* The header row is the column tab. */
+  .body :global(th.coltab) {
+    cursor: default;
+    touch-action: none;
+  }
+  .body :global(th[data-h]) {
+    cursor: grab;
+  }
+  .body :global(.rowtab.on),
+  .body :global(th.coltab.on) {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  /* Where a dragged row or column will land. */
+  .marker {
     position: absolute;
-    inset: 0;
+    z-index: 5;
+    background: var(--accent);
+    border-radius: 2px;
     pointer-events: none;
-    overflow: hidden;
-  }
-  .pins :global(*) {
-    pointer-events: auto;
   }
   .grow {
     flex: 1;
