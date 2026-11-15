@@ -4,16 +4,13 @@
   import TableFrame from './TableFrame.svelte';
   import CashflowGrid from './CashflowGrid.svelte';
   import TableGrid from './TableGrid.svelte';
-  import TableTabs from './TableTabs.svelte';
 
   let canvasEl: HTMLDivElement;
   let contentEl: HTMLDivElement;
   let editorEl: HTMLInputElement;
-  let overlayEl = $state<HTMLDivElement | null>(null);
   const z = $derived(app.zoom);
-  /** Margin around the zoomed canvas so row/column tabs never fall off its edge at small zoom. */
+  /** Margin around the zoomed canvas. */
   const PAD = 40;
-  const focused = $derived(app.focusTableId ? app.sheet.tables.find((t) => t.id === app.focusTableId) : undefined);
 
   const maxTable = $derived(app.maximizedId ? app.sheet.tables.find((t) => t.id === app.maximizedId) : undefined);
   const size = $derived.by(() => {
@@ -133,11 +130,9 @@
       aria-label="Cell editor"
     />
   </div>
-  {#if !maxTable}
-    <!-- Row and column tabs live outside the scaled content so they stay full size at any zoom. -->
-    <div class="overlay" bind:this={overlayEl}>
-      {#if focused && overlayEl}<TableTabs table={focused} layer={overlayEl} />{/if}
-    </div>
+  {#if app.lineGhost}
+    <!-- A row/column drag off its table: what dropping it will make. -->
+    <div class="ghost" style="left:{app.lineGhost.x + 12}px;top:{app.lineGhost.y + 12}px">{app.lineGhost.text}</div>
   {/if}
   </div>
 </div>
@@ -160,13 +155,17 @@
     /* The filled table scrolls inside itself; nothing (e.g. the parked cell editor) may scroll the canvas. */
     overflow: clip;
   }
-  .overlay {
-    position: absolute;
-    inset: 0;
+  .ghost {
+    position: fixed;
+    z-index: var(--z-dialog);
     pointer-events: none;
-  }
-  .overlay :global(*) {
-    pointer-events: auto;
+    border: 2px dashed var(--accent);
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: var(--radius-8);
+    padding: 10px 14px;
+    color: var(--accent);
+    font-weight: 600;
+    white-space: nowrap;
   }
   .content {
     position: absolute;

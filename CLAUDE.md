@@ -29,22 +29,30 @@ Stories Web App wins.** Don't copy its rules here; this file only adds what is s
 - Cashflow grid: label column 200px, month columns 100px, two header rows (year, month; centred).
   Header-row text is always centred in both kinds of table (owner's decision), whatever the column type.
 - Canvas: tables snap to a 20px grid; a 40px margin surrounds the zoomed canvas. Zoom 25–400 %
-  (steps 25, 50, 75, 100, 125, 150, 200, 300, 400). Row/column tabs live on an unscaled overlay with a fixed
-  thickness (rows 20px / 30px touch, columns 15px / 23px touch).
+  (steps 25, 50, 75, 100, 125, 150, 200, 300, 400), per sheet (localStorage per file; scroll per sheet while open).
+- **Row/column tabs are part of every table (owner's decision):** the first column is the row-tab column
+  (`ROWTAB_W` 28px / 36px touch; row numbers, `th[data-rowtab]`, not a model column), then the header column.
+  The header row is the column tab (`th[data-coltab]`): click selects the column, drag reorders (Tables),
+  double-click / double-tap renames. Cashflow: a month header selects its month, a year header all its months
+  (`data-years`), the corner over the labels the label column; the far corner (`data-tabcorner`) the whole table.
+  Row tabs drag to reorder or onto the canvas for a new table (⌥ copies). Input is handled in `TableFrame`
+  (`onLineDown`); the drag label is `app.lineGhost` (drawn by Canvas). They scale with the zoom.
 - Fill Window (one table fills the canvas, headers and first column pinned): Esc never leaves it; only Restore does.
   Each sheet remembers its filled table, per file across closing it (localStorage, like zoom and the active
   sheet). Fill / Restore zooms the card from its old rectangle (`app.fillFrom`, `zoomFrom` in `src/lib/motion.ts`). Columns are fitted to the width (`fitColumns` in `src/lib/grid.ts`):
   text, files and row labels wrap and give up width first; numbers, dates and checkboxes never wrap.
-  Row/column tabs are pinned in a gutter left of and above the scrolling body (`TableTabs` with `pinned`): they
-  follow its scroll, hide under the pinned headers, and drags only reorder (no drag-out), scrolling near an edge.
+  Row tabs, the header column and the header rows are sticky; drags only reorder there (no drag-out) and scroll
+  near an edge. Tables carry an explicit width so `table-layout: fixed` holds and wide tables scroll.
 - Text alignment (Left / Center / Right) applies to text, date and row-label cells only, per cell
   (`aligns`, keyed like `styles`); ⌘{ ⌘| ⌘}, the Format popover, the Align submenu and the Inspector.
 - Deletes are undoable and show a notice with Undo. Files (Home) and snapshots (File menu, which also shows Undo
   in place) are removed for good only when the notice expires or the page/file closes.
 - Clipboard: copy writes TSV plus HTML whose cells carry `data-cf-s` / `data-cf-a` (tint, alignment), so a paste
   into this app restores them (`formatsFromHTML`; the Clipboard-API paste matches this window's last copy).
-  Safari needs `beforecopy/beforecut/beforepaste` cancelled (App) to fire clipboard events for a grid
-  selection; menu Copy runs `execCommand('copy')` first, then the async Clipboard API.
+  iPad Safari copies only from a real text selection: `execCopy` selects a hidden copy of the text and runs
+  `execCommand('copy')` inside the tap/key press (async Clipboard API as fallback); App routes ⌘C/⌘X there and
+  runs Paste itself when no paste event follows ⌘V. Paste uses `readText` (Safari's Paste bubble), else this
+  window's last copy (`app.copiedText`). `beforecopy/beforecut/beforepaste` are cancelled for Mac Safari's menu.
 - Size class: `app.sizeClass` from the measured container width (`app.width`); CSS uses `max-width: 599px`.
 
 ## Commands
@@ -79,8 +87,8 @@ Stories Web App wins.** Don't copy its rules here; this file only adds what is s
 - `src/lib/store.svelte.ts` — single app state (Svelte 5 runes): selection, editing, undo (snapshots), paste, persistence
 - `src/components/` — App (hash routing `#/` list, `#/f/<id>` editor, `#/f/<id>/s/<sid>` read-only snapshot; keyboard + clipboard),
   Home (file list), TopBar (back, FileMenu, Toolbar with measured overflow), SheetTabs row, Icon, MenuList / PopupMenus (context + touch
-  edit menu), Canvas (zoom: scaled content + unscaled overlay holding TableTabs; cell editor; filled view), TableFrame
-  (title, drag, pointer/touch selection) with CashflowGrid / TableGrid, Inspector + SourcePicker, ImportDialog,
+  edit menu), Canvas (zoom: scaled content; cell editor; filled view; drag label), TableFrame
+  (title, drag, pointer/touch selection, row/column tab input) with CashflowGrid / TableGrid, Inspector + SourcePicker, ImportDialog,
   FilesPopover, StatusBar
 
 ## Conventions
@@ -93,7 +101,7 @@ Stories Web App wins.** Don't copy its rules here; this file only adds what is s
 - Read-only (snapshot) windows: `app.readonly`; `change()` and editing refuse to run.
 - Selection and the open cell editor are remapped by row id when content is replaced.
 - Zoom (`app.zoom`, 0.25–4): table positions and the cell editor are in unzoomed canvas pixels; convert pointer
-  deltas and drop points with `/ app.zoom`. Row/column tabs are measured in screen pixels on the overlay.
+  deltas and drop points with `/ app.zoom`.
 - Outflows are negative numbers. Amounts are stored per month on the row; months outside the window are kept.
   On a source row, `values` are manual overrides. Formula rows count toward net cash flow; footer formulas don't.
 - The cell editor is one persistent `<input>` laid over the cell (the design system's focus/IME rules apply).

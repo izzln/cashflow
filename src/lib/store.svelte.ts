@@ -55,6 +55,7 @@ import { convertCell, firstColumnOf, newColumnId, COLUMN_TYPE_LABELS } from './c
 import { amountColumn } from './import/mapping';
 
 const SHEET_KEY = 'cashflow-allseeing.activeSheet.';
+/** Per file: each sheet's zoom ({ sheetId: zoom }). */
 const ZOOM_KEY = 'cashflow-allseeing.zoom.';
 /** Per file (and snapshot): which table fills the window on each sheet. */
 const FILL_KEY = 'cashflow-allseeing.filled.';
@@ -67,6 +68,11 @@ export const LABEL_W = 200;
 export const COL_W = 100;
 export const ROW_H = 28;
 export const TITLE_H = 32;
+/**
+ * The row-tab column built into every table (row numbers: select and drag rows), as wide as
+ * a touch target on touch screens.
+ */
+export const ROWTAB_W = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 36 : 28;
 
 export interface Selection {
   tableId: string;
@@ -96,7 +102,7 @@ function writeStorage(key: string, value: string) {
 }
 
 export function tableWidth(t: Table, months: number): number {
-  return t.kind === 'table' ? t.columns.reduce((s, c) => s + columnWidth(c), 0) : LABEL_W + months * COL_W;
+  return ROWTAB_W + (t.kind === 'table' ? t.columns.reduce((s, c) => s + columnWidth(c), 0) : LABEL_W + months * COL_W);
 }
 
 export function tableHeight(t: Table): number {
@@ -140,8 +146,8 @@ class AppState {
   showInspector = $state(typeof window !== 'undefined' && window.innerWidth >= 900);
   /** Fill Window / Restore: the table's screen rectangle before the change, to zoom from. */
   fillFrom: { id: string; rect: DOMRect } | null = null;
-  /** Bumped when tables finish moving without a data change (e.g. the Fill Window zoom), so tabs re-measure. */
-  layoutTick = $state(0);
+  /** A row/column drag heading outside its table: the label shown by the pointer (Canvas draws it). */
+  lineGhost = $state<{ x: number; y: number; text: string } | null>(null);
   /** Table whose title is being renamed in place. */
   renamingTableId = $state<string | null>(null);
   /** Table column whose header is being renamed in place. */
@@ -164,8 +170,12 @@ class AppState {
   }
   /** Width available to the filled table (Fill Window), measured by its frame. */
   fillWidth = $state(0);
-  /** Workspace zoom, 0.25–4 (25 %–400 %, as in Numbers). Remembered per file on this device. */
+  /** Workspace zoom of the active sheet, 0.25–4 (25 %–400 %, as in Numbers). */
   zoom = $state(1);
+  /** Each sheet's zoom, remembered per file on this device. */
+  private zoomBySheet: Record<string, number> = {};
+  /** Each sheet's canvas scroll position while the file is open. */
+  private scrollBySheet: Record<string, { x: number; y: number }> = {};
   canvasEl: HTMLElement | null = null;
 
   /** The files cell whose attachments popover is open. */
@@ -349,10 +359,20 @@ class AppState {
     this.wb = wb;
     this.version++;
     this.base = structuredClone(wb);
-    const z = Number(readStorage(ZOOM_KEY + meta.id));
-    this.zoom = z >= ZOOM_MIN && z <= ZOOM_MAX ? z : 1;
+    let zooms: Record<string, number> = {};
+    try {
+      const v = JSON.parse(readStorage(ZOOM_KEY + meta.id) ?? '{}');
+      if (v && typeof v === 'object') zooms = v;
+    } catch {
+      zooms = {};
+    }
+    this.zoomBySheet = Object.fromEntries(
+      Object.entries(zooms).filter(([, z]) => typeof z === 'number' && z >= ZOOM_MIN && z <= ZOOM_MAX),
+    );
+    this.scrollBySheet = {};
     const saved = readStorage(SHEET_KEY + meta.id);
     this.activeSheetId = wb.sheets.some((s) => s.id === saved) ? saved! : wb.sheets[0].id;
+    this.zoom = this.zoomBySheet[this.activeSheetId] ?? 1;
     this.undoStack = [];
     this.redoStack = [];
     this.syncHistoryFlags();
@@ -629,10 +649,20 @@ class AppState {
 
   setSheet(id: string) {
     this.commitEdit();
+    const el = this.canvasEl;
+    if (el) this.scrollBySheet[this.activeSheetId] = { x: el.scrollLeft, y: el.scrollTop };
     this.activeSheetId = id;
     this.selection = null;
     this.focusTableId = this.maximizedId;
+    // Each sheet keeps its own zoom (and, while the file is open, its scroll position).
+    this.zoom = this.zoomBySheet[id] ?? 1;
     if (this.file) writeStorage(SHEET_KEY + this.file.id, id);
+    const back = this.scrollBySheet[id] ?? { x: 0, y: 0 };
+    void tick().then(() => {
+      if (!el || this.activeSheetId !== id) return;
+      el.scrollLeft = back.x;
+      el.scrollTop = back.y;
+    });
   }
 
   addSheet() {
@@ -842,6 +872,21 @@ class AppState {
       axis === 'row'
         ? { tableId, ranges: [{ a: { r: start, c: 0 }, b: { r: to, c: m.cols - 1 } }], anchor: { r: start, c: 0 }, lines: 'row' }
         : { tableId, ranges: [{ a: { r: 0, c: start }, b: { r: m.rows - 1, c: to } }], anchor: { r: 0, c: start }, lines: 'col' };
+  }
+
+  /** Rows or columns of a table that are selected from end to end (every cell across). */
+  wholeLines(tableId: string, axis: 'row' | 'col'): number[] {
+    const sel = this.selection;
+    const t = this.table(tableId);
+    if (!sel || sel.tableId !== tableId || !t) return [];
+    const m = this.model(t);
+    const out = new Set<number>();
+    for (const g of sel.ranges) {
+      const b = bounds(g);
+      if (axis === 'row' && b.c0 === 0 && b.c1 === m.cols - 1) for (let r = b.r0; r <= b.r1; r++) out.add(r);
+      if (axis === 'col' && b.r0 === 0 && b.r1 === m.rows - 1) for (let c = b.c0; c <= b.c1; c++) out.add(c);
+    }
+    return [...out].sort((a, b) => a - b);
   }
 
   /** Move body rows (by index) so they start at index `to` (counted before the move). */
@@ -1385,7 +1430,8 @@ class AppState {
     const py = el ? (el.scrollTop + cy) / old : 0;
     this.zoom = next;
     this.menu = null;
-    if (this.file) writeStorage(ZOOM_KEY + this.file.id, String(next));
+    this.zoomBySheet[this.activeSheetId] = next;
+    if (this.file) writeStorage(ZOOM_KEY + this.file.id, JSON.stringify(this.zoomBySheet));
     await tick();
     if (el) {
       el.scrollLeft = px * next - cx;
@@ -1736,6 +1782,12 @@ class AppState {
 
   /** What this window copied last: a paste of the same text restores its tints and alignment. */
   private lastCopy: { text: string; formats: CellFormat[][] } | null = null;
+  /** The text this window copied last (the in-app fallback when the browser won't let a page read the clipboard). */
+  get copiedText(): string | null {
+    return this.lastCopy?.text ?? null;
+  }
+  /** False when the last copy didn't reach the system clipboard: Paste then uses this window's copy. */
+  copyReachedSystem = true;
 
   /** The last selected range as text grids for the clipboard, with each cell's tint and alignment. */
   copyData(): { text: string; html: string } | null {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { app, ROW_H } from '../lib/store.svelte';
+  import { app, ROW_H, ROWTAB_W } from '../lib/store.svelte';
   import { formatNumber } from '../lib/format';
   import { cellsInRanges, columnWidth, dataTableModel, fitColumns, styleKey, textWidth, type ColFit } from '../lib/grid';
   import { cellDisplay } from '../lib/columns';
@@ -36,7 +36,7 @@
       }
       return { natural: Math.max(natural, min), min, wrap: false };
     });
-    return fitColumns(specs, app.fillWidth - 2);
+    return fitColumns(specs, app.fillWidth - 2 - ROWTAB_W);
   });
   const wraps = (c: number) => fitting && (table.columns[c].type === 'text' || table.columns[c].type === 'files');
 
@@ -76,35 +76,34 @@
     app.renamingColumn = null;
   }
 
-  /** Select a whole column (header click); a right-click also opens the column menu. */
-  function selectColumn(c: number) {
-    app.selection = { tableId: table.id, ranges: [{ a: { r: 0, c }, b: { r: nb, c } }], anchor: { r: 0, c } };
-    app.focusTableId = table.id;
-  }
+  // Fully selected rows and columns light up their row tab / header cell (TableFrame handles the input).
+  const onRows = $derived(new Set(sel ? app.wholeLines(table.id, 'row') : []));
+  const onCols = $derived(new Set(sel ? app.wholeLines(table.id, 'col') : []));
 
   const files = (v: unknown) => (Array.isArray(v) ? (v as Attachment[]) : []);
   let dropKey = $state<string | null>(null);
 </script>
 
-<table>
+<!-- An explicit width keeps table-layout: fixed in force, so columns keep their widths (and scroll) when they don't fit. -->
+<table style="width:{ROWTAB_W + widths.reduce((a, b) => a + b, 0)}px">
   <colgroup>
+    <col style="width:{ROWTAB_W}px" />
     {#each table.columns as col, c (col.id)}<col style="width:{widths[c]}px" />{/each}
   </colgroup>
   <thead>
     <tr style="height:{ROW_H}px">
+      <th class="rowtab corner" data-t={table.id} data-tabcorner title="Select the whole table"></th>
       {#each table.columns as col, c (col.id)}
+        <!-- The header row is the column tab: click selects the column, drag moves it, double-click renames. -->
         <th
           data-t={table.id}
           data-h={c}
-          class="center"
+          data-coltab={c}
+          class="center coltab"
+          class:on={onCols.has(c)}
           class:wrap={wraps(c)}
-          title={app.readonly ? col.name : `${col.name} — double-click to rename`}
+          title={app.readonly ? col.name : `${col.name} — click to select, drag to move, double-click to rename`}
           ondblclick={() => renameColumn(col.id)}
-          oncontextmenu={(e) => {
-            e.preventDefault();
-            selectColumn(c);
-            app.menu = { kind: 'context', target: 'column', tableId: table.id, x: e.clientX, y: e.clientY };
-          }}
         >
           {#if renaming === col.id}
             <input
@@ -127,6 +126,7 @@
   <tbody>
     {#each table.entries as e, r (e.id)}
       <tr style="height:{ROW_H}px">
+        <th class="rowtab" class:on={onRows.has(r)} data-t={table.id} data-rowtab={r} aria-label={`Row ${r + 1}`}>{r + 1}</th>
         {#each table.columns as col, c (col.id)}
           {@const v = e.cells[col.id]}
           <td
@@ -170,6 +170,7 @@
   </tbody>
   <tfoot>
     <tr style="height:{ROW_H}px" class="first">
+      <th class="rowtab" class:on={onRows.has(nb)} data-t={table.id} data-rowtab={nb} aria-label="Total row"></th>
       {#each table.columns as col, c (col.id)}
         {@const v = totals[c]}
         <td
