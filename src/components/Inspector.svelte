@@ -8,6 +8,7 @@
   import SourcePicker from './SourcePicker.svelte';
   import ColumnFormat from './ColumnFormat.svelte';
   import HighlightRules from './HighlightRules.svelte';
+  import SortFilter from './SortFilter.svelte';
   import { COLUMN_TYPE_LABELS } from '../lib/columns';
   import type { ColumnType } from '../lib/model';
 
@@ -41,10 +42,6 @@
     el.value = formatNumber(n ?? 0);
   }
 
-  function remove() {
-    if (t) app.deleteTable(t.id); // undoable; the notice offers Undo
-  }
-
   /** First error a formula gives in the visible months, if any. */
   function formulaError(get: (m: string) => unknown, formula: string): string | null {
     const syntax = app.ev.check(formula);
@@ -63,9 +60,19 @@
   ];
 </script>
 
-<!-- Docked when wide; an overlay from the trailing edge when regular; a bottom sheet when compact. -->
-<aside class="inspector" class:overlay={app.sizeClass === 'regular'} class:sheet={app.sizeClass === 'compact'}>
-  {#if !t}
+<!-- Docked when wide; an overlay from the trailing edge when regular; a bottom sheet when compact.
+     It shows the Inspector or, from the toolbar's Filter button, Sort & Filter (like Numbers' sidebar). -->
+<aside class="inspector" class:overlay={app.sizeClass === 'regular'} class:sheet={app.sizeClass === 'compact'}
+  aria-label={app.panel === 'filter' ? 'Sort and filter' : 'Inspector'}>
+  {#if app.panel === 'filter'}
+    {#if t?.kind === 'table'}
+      <div class="ptitle">Sort &amp; Filter <span>{t.name}</span></div>
+      <SortFilter table={t} {ro} />
+    {:else}
+      <div class="ptitle">Sort &amp; Filter</div>
+      <p class="hint">{t ? 'A cashflow follows its months, so it can’t be sorted or filtered. Select a table.' : 'Select a table to sort or filter its rows.'}</p>
+    {/if}
+  {:else if !t}
     <h3>File</h3>
     <label>
       Sync every (minutes)
@@ -74,159 +81,128 @@
     </label>
     <p class="hint">
       {#if ro}Snapshots don't sync.{:else if app.syncLeader}This window runs the sync{app.lastSyncAt ? ` (last check ${fmtTime.format(app.lastSyncAt)})` : ''}.{:else}Another window with this file open runs the sync.{/if}
-      Feishu and Huoban sources will sync on this timer once the server is set up. Tables filled from CSV/Excel update when you import the file again.
     </p>
-    <p class="hint">Select a table to edit it.</p>
-  {:else if t.kind === 'cashflow'}
-    <h3>Cashflow</h3>
-    <label>Name {#key t.id}<input value={t.name} disabled={ro} onchange={(e) => app.renameTable(t.id, value(e))} />{/key}</label>
-    <label>Opening balance
-      {#key `${t.id}:${t.openingBalance}`}<input value={formatNumber(t.openingBalance)} onchange={setOpening} inputmode="decimal" disabled={ro} />{/key}
-    </label>
-    <label>As of the start of
-      <select value={t.openingMonth} disabled={ro} onchange={(e) => app.updateCashTable(t.id, { openingMonth: value(e) })}>
-        {#each monthOptions as m (m)}<option value={m}>{label(m)}</option>{/each}
-      </select>
-    </label>
-    {#if t.openingMonth < app.months[0]}
-      <p class="hint">Months before {label(app.months[0])} are hidden, but they still count toward the balance.</p>
-    {/if}
-    {#if !ro}
-      <div class="buttons">
-        <button onclick={() => app.addRow(t.id)}>+ Row</button>
-        <button onclick={() => app.addFooter(t.id)}>+ Footer formula</button>
-        <button class="danger" onclick={remove}>Delete cashflow</button>
-      </div>
-    {/if}
-
-    {#if rowSel}
-      {@const row = rowSel.row}
-      {@const kind = rowKind(row)}
-      <h3>Row: {row.label || 'untitled'}</h3>
-      <div class="segmented" role="radiogroup" aria-label="Row type">
-        {#each KINDS as k (k.kind)}
-          <button role="radio" aria-checked={kind === k.kind} class:on={kind === k.kind} disabled={ro}
-            onclick={() => app.setRowKind(t.id, row.id, k.kind)}>{k.label}</button>
-        {/each}
-      </div>
-      {#if kind === 'manual'}
-        <p class="hint">Type amounts into the row. Inflows positive, outflows negative.</p>
-      {:else if kind === 'source' && row.source}
-        {@const src = row.source}
-        <SourcePicker mode="row" tableId={src.tableId} dateCol={src.dateCol} numberCol={src.amountCol} filters={src.filters} flip={src.flip} disabled={ro}
-          onchange={(p) => app.setRowSource(t.id, row.id, { ...(p.tableId !== undefined && { tableId: p.tableId }), ...(p.dateCol !== undefined && { dateCol: p.dateCol }), ...(p.numberCol !== undefined && { amountCol: p.numberCol }), ...(p.filters && { filters: p.filters }), ...(p.flip !== undefined && { flip: p.flip }) })} />
-        <p class="hint">Each month shows the total of the amount column for rows dated in that month (blue). Type in a cell to override it (orange corner); clear the cell to go back to the dataTable.</p>
-        {#if Object.keys(row.values).length && !ro}
-          <button onclick={() => app.clearOverrides(t.id, row.id)}>Remove {Object.keys(row.values).length} override(s)</button>
-        {/if}
-      {:else if kind === 'formula'}
-        {@const err = formulaError((m) => app.ev.row(t, row, m), row.formula ?? '')}
-        <label>Formula
-          {#key row.id}<input class="mono" value={row.formula} disabled={ro} placeholder="[Sales] * -6%" autocapitalize="off" spellcheck="false"
-            onchange={(e) => app.setRowFormula(t.id, row.id, value(e))} />{/key}
-        </label>
-        {#if row.formula && err}<p class="warn">{err}</p>{/if}
-        <p class="hint">This row counts toward net cash flow, so it can't use Net cash flow or Balance. For those, use a footer formula.</p>
-        {@render formulaHelp()}
-      {/if}
-    {/if}
-
-    {#if cellSel && rowKind(cellSel.row) !== 'formula'}
-      {@const cs = cellSel.table.cellSources[cellSel.key]}
-      {@const fromRow = rowKind(cellSel.row) === 'source'}
-      {@const mode = cs ? 'total' : fromRow && cellSel.row.values[cellSel.month] === undefined ? 'row' : 'manual'}
-      <h3>Cell: {cellSel.row.label || 'untitled'} · {label(cellSel.month)}</h3>
-      <div class="segmented" role="radiogroup" aria-label="Cell value">
-        {#if fromRow}
-          <button role="radio" aria-checked={mode === 'row'} class:on={mode === 'row'} disabled={ro} onclick={() => app.setCellMode(t.id, cellSel.key, 'row')}>From row</button>
-        {/if}
-        <button role="radio" aria-checked={mode === 'manual'} class:on={mode === 'manual'} disabled={ro} onclick={() => app.setCellMode(t.id, cellSel.key, 'manual')}>Manual</button>
-        <button role="radio" aria-checked={mode === 'total'} class:on={mode === 'total'} disabled={ro} onclick={() => app.setCellMode(t.id, cellSel.key, 'total')}>Table total</button>
-      </div>
-      {#if cs}
-        <SourcePicker mode="cell" tableId={cs.tableId} numberCol={cs.col} filters={cs.filters} flip={cs.flip} disabled={ro}
-          onchange={(p) => app.updateCellSource(t.id, cellSel.key, { ...(p.tableId !== undefined && { tableId: p.tableId }), ...(p.numberCol !== undefined && { col: p.numberCol }), ...(p.filters && { filters: p.filters }), ...(p.flip !== undefined && { flip: p.flip }) })} />
-        <p class="hint">The total of one table column over all matching rows, whatever their dates (marked ⇄). Typing a number in the cell switches it to Manual.</p>
-      {:else if mode === 'row'}
-        <p class="hint">This month follows the row's table source. Choose Manual (or just type) to put your own number here.</p>
-      {:else}
-        <p class="hint">{fromRow ? 'A number typed over the row’s table source (marked ✎). Choose From row to go back.' : 'Type a number in the cell.'} To fill a whole row month by month from a table, select the row's first cell.</p>
-      {/if}
-    {/if}
-
-    {#if footSel}
-      {@const f = footSel.footer}
-      {@const err = formulaError((m) => app.ev.footer(t, f, m), f.formula)}
-      <h3>Footer row</h3>
-      <label>Label {#key f.id}<input value={f.label} disabled={ro} onchange={(e) => app.updateFooter(t.id, f.id, { label: value(e).trim() })} />{/key}</label>
-      <label>Formula
-        {#key f.id}<input class="mono" value={f.formula} disabled={ro} autocapitalize="off" spellcheck="false"
-          onchange={(e) => app.updateFooter(t.id, f.id, { formula: value(e) })} />{/key}
-      </label>
-      {#if err}<p class="warn">{err}</p>{/if}
-      <p class="hint">Footer rows don't count toward net cash flow. They can use [Net cash flow] and [Balance].</p>
-      {@render formulaHelp()}
-      {#if !ro}<button class="danger" onclick={() => app.deleteFooter(t.id, f.id)}>Delete footer row</button>{/if}
-    {/if}
   {:else}
-    <h3>Table</h3>
-    <label>Name {#key t.id}<input value={t.name} disabled={ro} onchange={(e) => app.renameTable(t.id, value(e))} />{/key}</label>
-    <p class="hint">{t.entries.length} rows. Cashflow rows can take their numbers from this table: select a cashflow row's first cell and choose “From table”.</p>
-    {#if !ro}
-      <div class="buttons">
-        <button class="primary" onclick={() => pickImportFile(t.id)}>Import CSV / Excel…</button>
-        <button onclick={() => app.addRow(t.id)}>+ Row</button>
-      </div>
-      {#if t.importedFrom}
-        <p class="hint">Last imported from <b>{t.importedFrom}</b>. To refresh, import the new export; the column mapping is remembered.</p>
+    <div class="segmented tabs" role="tablist" aria-label="Inspector">
+      <button role="tab" aria-selected={app.inspectorTab === 'table'} class:on={app.inspectorTab === 'table'} onclick={() => (app.inspectorTab = 'table')}>Table</button>
+      <button role="tab" aria-selected={app.inspectorTab === 'cell'} class:on={app.inspectorTab === 'cell'} onclick={() => (app.inspectorTab = 'cell')}>Cell</button>
+    </div>
+
+    {#if app.inspectorTab === 'table'}
+      <label>Name {#key t.id}<input value={t.name} disabled={ro} onchange={(e) => app.renameTable(t.id, value(e))} />{/key}</label>
+      {#if t.kind === 'cashflow'}
+        <label>Opening balance
+          {#key `${t.id}:${t.openingBalance}`}<input value={formatNumber(t.openingBalance)} onchange={setOpening} inputmode="decimal" disabled={ro} />{/key}
+        </label>
+        <label>As of the start of
+          <select value={t.openingMonth} disabled={ro} onchange={(e) => app.updateCashTable(t.id, { openingMonth: value(e) })}>
+            {#each monthOptions as m (m)}<option value={m}>{label(m)}</option>{/each}
+          </select>
+        </label>
+        {#if t.openingMonth < app.months[0]}
+          <p class="hint">Months before {label(app.months[0])} are hidden, but they still count toward the balance.</p>
+        {/if}
+        <p class="hint">Enter outflows as negative numbers.</p>
+        {#if !ro}<button onclick={() => app.addFooter(t.id)}>+ Footer Formula</button>{/if}
+      {:else}
+        {#if !ro}
+          <button class="primary" onclick={() => pickImportFile(t.id)}>Import CSV / Excel…</button>
+          {#if t.importedFrom}
+            <p class="hint">Last imported from <b>{t.importedFrom}</b>. Import the new export to refresh; the column mapping is remembered.</p>
+          {/if}
+        {/if}
+        <h3>Conditional Highlighting</h3>
+        <HighlightRules table={t} {ro} />
       {/if}
-    {/if}
-    {#if colSel}
-      {@const col = colSel.col}
-      <h3>Column: {col.name}</h3>
-      <label>Name {#key col.id}<input value={col.name} disabled={ro} onchange={(e) => app.renameColumn(t.id, col.id, value(e))} />{/key}</label>
-      <label>Cell format
-        <select value={col.type} disabled={ro} onchange={(e) => app.setColumnType(t.id, col.id, value(e) as ColumnType)}>
+    {:else}
+      {#if t.kind === 'cashflow'}
+        {#if rowSel}
+          {@const row = rowSel.row}
+          {@const kind = rowKind(row)}
+          <h3>Row: {row.label || 'untitled'}</h3>
+          <div class="segmented" role="radiogroup" aria-label="Row type">
+            {#each KINDS as k (k.kind)}
+              <button role="radio" aria-checked={kind === k.kind} class:on={kind === k.kind} disabled={ro}
+                onclick={() => app.setRowKind(t.id, row.id, k.kind)}>{k.label}</button>
+            {/each}
+          </div>
+          {#if kind === 'source' && row.source}
+            {@const src = row.source}
+            <SourcePicker mode="row" tableId={src.tableId} dateCol={src.dateCol} numberCol={src.amountCol} filters={src.filters} flip={src.flip} disabled={ro}
+              onchange={(p) => app.setRowSource(t.id, row.id, { ...(p.tableId !== undefined && { tableId: p.tableId }), ...(p.dateCol !== undefined && { dateCol: p.dateCol }), ...(p.numberCol !== undefined && { amountCol: p.numberCol }), ...(p.filters && { filters: p.filters }), ...(p.flip !== undefined && { flip: p.flip }) })} />
+            <p class="hint">Each month totals the amount column for rows dated in that month. Typing in a cell overrides it.</p>
+            {#if Object.keys(row.values).length && !ro}
+              <button onclick={() => app.clearOverrides(t.id, row.id)}>Remove {Object.keys(row.values).length} override(s)</button>
+            {/if}
+          {:else if kind === 'formula'}
+            {@const err = formulaError((m) => app.ev.row(t, row, m), row.formula ?? '')}
+            <label>Formula
+              {#key row.id}<input class="mono" value={row.formula} disabled={ro} placeholder="[Sales] * -6%" autocapitalize="off" spellcheck="false"
+                onchange={(e) => app.setRowFormula(t.id, row.id, value(e))} />{/key}
+            </label>
+            {#if row.formula && err}<p class="warn">{err}</p>{/if}
+            <p class="hint">Counts toward net cash flow, so it can't use Net cash flow or Balance (use a footer formula).</p>
+            {@render formulaHelp()}
+          {/if}
+        {/if}
+
+        {#if cellSel && rowKind(cellSel.row) !== 'formula'}
+          {@const cs = cellSel.table.cellSources[cellSel.key]}
+          {@const fromRow = rowKind(cellSel.row) === 'source'}
+          {@const mode = cs ? 'total' : fromRow && cellSel.row.values[cellSel.month] === undefined ? 'row' : 'manual'}
+          <h3>Cell: {cellSel.row.label || 'untitled'} · {label(cellSel.month)}</h3>
+          <div class="segmented" role="radiogroup" aria-label="Cell value">
+            {#if fromRow}
+              <button role="radio" aria-checked={mode === 'row'} class:on={mode === 'row'} disabled={ro} onclick={() => app.setCellMode(t.id, cellSel.key, 'row')}>From row</button>
+            {/if}
+            <button role="radio" aria-checked={mode === 'manual'} class:on={mode === 'manual'} disabled={ro} onclick={() => app.setCellMode(t.id, cellSel.key, 'manual')}>Manual</button>
+            <button role="radio" aria-checked={mode === 'total'} class:on={mode === 'total'} disabled={ro} onclick={() => app.setCellMode(t.id, cellSel.key, 'total')}>Table total</button>
+          </div>
+          {#if cs}
+            <SourcePicker mode="cell" tableId={cs.tableId} numberCol={cs.col} filters={cs.filters} flip={cs.flip} disabled={ro}
+              onchange={(p) => app.updateCellSource(t.id, cellSel.key, { ...(p.tableId !== undefined && { tableId: p.tableId }), ...(p.numberCol !== undefined && { col: p.numberCol }), ...(p.filters && { filters: p.filters }), ...(p.flip !== undefined && { flip: p.flip }) })} />
+            <p class="hint">The total of one table column over all matching rows, whatever their dates (⇄).</p>
+          {/if}
+        {/if}
+
+        {#if footSel}
+          {@const f = footSel.footer}
+          {@const err = formulaError((m) => app.ev.footer(t, f, m), f.formula)}
+          <h3>Footer row</h3>
+          <label>Label {#key f.id}<input value={f.label} disabled={ro} onchange={(e) => app.updateFooter(t.id, f.id, { label: value(e).trim() })} />{/key}</label>
+          <label>Formula
+            {#key f.id}<input class="mono" value={f.formula} disabled={ro} autocapitalize="off" spellcheck="false"
+              onchange={(e) => app.updateFooter(t.id, f.id, { formula: value(e) })} />{/key}
+          </label>
+          {#if err}<p class="warn">{err}</p>{/if}
+          <p class="hint">Footer rows don't count toward net cash flow, so they can use [Net cash flow] and [Balance].</p>
+          {@render formulaHelp()}
+          {#if !ro}<button class="danger" onclick={() => app.deleteFooter(t.id, f.id)}>Delete Footer Row</button>{/if}
+        {/if}
+      {:else if colSel}
+        {@const col = colSel.col}
+        <h3>Data Format · {col.name}</h3>
+        <select class="wide" aria-label="Data format" value={col.type} disabled={ro} onchange={(e) => app.setColumnType(t.id, col.id, value(e) as ColumnType)}>
           {#each Object.entries(COLUMN_TYPE_LABELS) as [k, v] (k)}<option value={k}>{v}</option>{/each}
         </select>
-      </label>
-      <ColumnFormat table={t} {col} {ro} />
-      {#if !ro}
-        <div class="buttons">
-          <button onclick={() => app.insertColumn(t.id, colSel.index)} title="⌥←">+ Column before</button>
-          <button onclick={() => app.insertColumn(t.id, colSel.index + 1)} title="⌥→">+ Column after</button>
-          <button onclick={() => app.sortTable(t.id, col.id)}>Sort A→Z</button>
-          <button onclick={() => app.sortTable(t.id, col.id, true)}>Sort Z→A</button>
-          <button class="danger" onclick={() => app.deleteSelectedColumns()}>Delete column</button>
+        <ColumnFormat table={t} {col} {ro} />
+      {/if}
+
+      {#if app.canAlign()}
+        {@const cur = app.currentAlign()}
+        <h3>Text</h3>
+        <div class="segmented" role="radiogroup" aria-label="Text alignment">
+          {#each [['left', 'Left'], ['center', 'Center'], ['right', 'Right']] as [a, name] (a)}
+            <button role="radio" aria-checked={cur === a} class:on={cur === a} disabled={ro} onclick={() => app.applyAlign(a as 'left' | 'center' | 'right')}>{name}</button>
+          {/each}
         </div>
       {/if}
+
+      {#if !app.selection}
+        <p class="hint">Select cells to see their settings.</p>
+      {/if}
     {/if}
-    <h3>Conditional Highlighting</h3>
-    <HighlightRules table={t} {ro} />
-    {#if !ro}<h3>Table</h3><button class="danger" onclick={remove}>Delete table</button>{/if}
   {/if}
-
-  {#if t && app.canAlign()}
-    {@const cur = app.currentAlign()}
-    <h3>Text</h3>
-    <div class="segmented" role="radiogroup" aria-label="Text alignment">
-      {#each [['left', 'Left'], ['center', 'Center'], ['right', 'Right']] as [a, name] (a)}
-        <button role="radio" aria-checked={cur === a} class:on={cur === a} onclick={() => app.applyAlign(a as 'left' | 'center' | 'right')}>{name}</button>
-      {/each}
-    </div>
-  {/if}
-
-  <h3>Tips</h3>
-  <ul class="hint">
-    <li>Drag a table by its title bar. It snaps to the grid.</li>
-    <li>Outflows are negative numbers. Net cash flow = sum of rows; Balance carries forward.</li>
-    <li>Type or press Enter to edit. Tab / Enter move on. Delete clears.</li>
-    <li>Drag to select; Shift extends; ⌘ adds more cells. Sum and average show bottom right.</li>
-    <li>iPad: tap a cell to select, tap it again for the edit menu, double-tap to edit, drag from a selected cell to extend.</li>
-    <li>Copy/paste works with Excel and Numbers. Pasting past the last row adds rows.</li>
-    <li>The same file can be open in several windows; edits in one show up in the others.</li>
-    <li>Snapshots freeze the file (automatically at month-end). Open one next to the live file to compare.</li>
-  </ul>
 </aside>
 
 
@@ -326,11 +302,28 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
   }
-  .buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+  /* The panel's title (Sort & Filter) and the Table / Cell tabs. */
+  .ptitle {
+    font-weight: 600;
     margin: 6px 0 4px;
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    overflow: hidden;
+  }
+  .ptitle span {
+    color: var(--muted);
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .segmented.tabs {
+    margin: 4px 0 14px;
+  }
+  select.wide {
+    width: 100%;
+    margin-bottom: 10px;
   }
   .segmented {
     display: flex;
@@ -366,10 +359,6 @@
   .warn {
     color: var(--neg);
     line-height: 1.4;
-  }
-  ul.hint {
-    padding-left: 16px;
-    margin: 0;
   }
   .help {
     color: var(--muted);

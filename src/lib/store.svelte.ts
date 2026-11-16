@@ -25,6 +25,7 @@ import {
   type NumberFormat,
   type Numbering,
   type SelectOption,
+  type SortRule,
   defaultNumbering,
   type Filter,
   type Attachment,
@@ -125,6 +126,32 @@ function snap(v: number): number {
   return Math.max(0, Math.round(v / GRID) * GRID);
 }
 
+/**
+ * Sort a Table's rows by rules, first rule first (a stable sort; empty cells go last whichever the
+ * direction). Numbers compare as numbers, text without letter case, ticked checkboxes after unticked.
+ */
+function sortEntries(t: DataTable, rules: SortRule[]) {
+  const keys = rules.map((r) => ({ col: t.columns.find((c) => c.id === r.col), desc: r.desc })).filter((k) => k.col);
+  if (!keys.length) return;
+  const key = (v: unknown): number | string =>
+    typeof v === 'number' ? v : v === true ? 1 : typeof v === 'string' ? v.toLowerCase() : Array.isArray(v) ? v.length : '';
+  t.entries = [...t.entries].sort((a, b) => {
+    for (const k of keys) {
+      const x = a.cells[k.col!.id];
+      const y = b.cells[k.col!.id];
+      if (x === undefined || y === undefined) {
+        if (x === y) continue;
+        return x === undefined ? 1 : -1;
+      }
+      const kx = key(x);
+      const ky = key(y);
+      const d = typeof kx === 'number' && typeof ky === 'number' ? kx - ky : String(kx).localeCompare(String(ky));
+      if (d) return k.desc ? -d : d;
+    }
+    return 0;
+  });
+}
+
 export function rowKind(row: Row): RowKind {
   return row.formula !== undefined ? 'formula' : row.source ? 'source' : 'manual';
 }
@@ -153,7 +180,19 @@ class AppState {
   get sizeClass(): 'compact' | 'regular' | 'wide' {
     return this.width < 600 ? 'compact' : this.width < 900 ? 'regular' : 'wide';
   }
-  showInspector = $state(typeof window !== 'undefined' && window.innerWidth >= 900);
+  /**
+   * The side panel: the Inspector, or Sort & Filter (like Numbers' Format / Organize sidebar), or none.
+   * Starts open on wide windows.
+   */
+  panel = $state<'inspector' | 'filter' | null>(typeof window !== 'undefined' && window.innerWidth >= 900 ? 'inspector' : null);
+  /** The Inspector's tab: the table's settings, or the selected cells'. */
+  inspectorTab = $state<'table' | 'cell'>('table');
+  /** The column whose filter rule Sort & Filter points out (opened from that column's header). */
+  filterFocusCol = $state<string | null>(null);
+
+  togglePanel(p: 'inspector' | 'filter') {
+    this.panel = this.panel === p ? null : p;
+  }
   /** Fill Window / Restore: the table's screen rectangle before the change, to zoom from. */
   fillFrom: { id: string; rect: DOMRect } | null = null;
   /** A row/column drag heading outside its table: the label shown by the pointer (Canvas draws it). */
@@ -1299,19 +1338,48 @@ class AppState {
     if (t?.kind !== 'table') return;
     const col = t.columns.find((c) => c.id === colId) ?? firstColumnOf(t, 'date') ?? t.columns[0];
     if (!col) return;
-    const key = (v: unknown): number | string =>
-      typeof v === 'number' ? v : v === true ? 1 : typeof v === 'string' ? v.toLowerCase() : Array.isArray(v) ? v.length : '';
-    this.change(() => {
-      t.entries = [...t.entries].sort((a, b) => {
-        const x = a.cells[col.id];
-        const y = b.cells[col.id];
-        if (x === undefined || y === undefined) return x === undefined ? (y === undefined ? 0 : 1) : -1;
-        const kx = key(x);
-        const ky = key(y);
-        const d = typeof kx === 'number' && typeof ky === 'number' ? kx - ky : String(kx).localeCompare(String(ky));
-        return descending ? -d : d;
-      });
+    this.change(() => sortEntries(t, [{ id: '', col: col.id, desc: descending }]));
+  }
+
+  // ---------- sort rules (Sort & Filter panel) ----------
+
+  private editSort(tableId: string, fn: (t: DataTable) => void) {
+    this.editTable(tableId, (t) => {
+      t.sort ??= [];
+      fn(t);
+      // Rules apply as soon as they change (as in Numbers); Sort Now re-applies after edits.
+      sortEntries(t, t.sort);
     });
+  }
+
+  addSortRule(tableId: string) {
+    this.editSort(tableId, (t) => {
+      const used = new Set(t.sort.map((r) => r.col));
+      const col = t.columns.find((c) => !used.has(c.id)) ?? t.columns[0];
+      t.sort.push({ id: uid(), col: col.id, desc: false });
+    });
+  }
+
+  updateSortRule(tableId: string, id: string, patch: Partial<Omit<SortRule, 'id'>>) {
+    this.editSort(tableId, (t) => {
+      const r = t.sort.find((x) => x.id === id);
+      if (r) Object.assign(r, patch);
+    });
+  }
+
+  removeSortRule(tableId: string, id: string) {
+    this.editSort(tableId, (t) => (t.sort = t.sort.filter((x) => x.id !== id)));
+  }
+
+  moveSortRule(tableId: string, from: number, to: number) {
+    this.editSort(tableId, (t) => {
+      const [r] = t.sort.splice(from, 1);
+      if (r) t.sort.splice(to, 0, r);
+    });
+  }
+
+  sortNow(tableId: string) {
+    this.editSort(tableId, () => {});
   }
 
   // ---------- dataTable columns ----------
@@ -1469,8 +1537,6 @@ class AppState {
 
   // ---------- row filter ----------
 
-  /** Where the filter popover is open: for a Table, anchored at a screen point, maybe on one column. */
-  filterUI = $state<{ tableId: string; x: number; y: number; colId?: string } | null>(null);
 
   private editFilter(tableId: string, fn: (t: DataTable) => void) {
     this.editTable(tableId, (t) => {
@@ -1517,20 +1583,20 @@ class AppState {
   }
 
   /**
-   * Open the row filter for a Table (the focused one by default), anchored at a screen point or the
-   * toolbar's Filter button. With a column, a rule for it is added if there is none yet.
+   * Show Sort & Filter in the side panel for a Table (the focused one by default). With a column (from
+   * its header's filter button), a filter rule for it is added if there is none yet.
    */
-  openFilter(tableId?: string | null, colId?: string, at?: { x: number; y: number }) {
+  openFilter(tableId?: string | null, colId?: string) {
     const t = this.table(tableId ?? this.selection?.tableId ?? this.focusTableId);
     if (t?.kind !== 'table') return;
     this.menu = null;
-    let pt = at;
-    if (!pt) {
-      const b = document.querySelector<HTMLElement>('[data-tool="filter"]')?.getBoundingClientRect();
-      pt = b ? { x: b.right, y: b.bottom + 6 } : { x: window.innerWidth - 16, y: 64 };
+    if (this.focusTableId !== t.id) {
+      this.focusTableId = t.id;
+      if (this.selection?.tableId !== t.id) this.selection = null;
     }
     if (colId && !this.readonly && !t.filter?.rules.some((r) => r.col === colId)) this.addFilterRule(t.id, colId);
-    this.filterUI = { tableId: t.id, x: pt.x, y: pt.y, colId };
+    this.filterFocusCol = colId ?? null;
+    this.panel = 'filter';
   }
 
   /** Delete every column touched by the selection (a dataTable keeps at least one). */

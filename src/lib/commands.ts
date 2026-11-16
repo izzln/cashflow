@@ -305,10 +305,8 @@ const list: Command[] = [
   { id: 'view.zoomIn', label: 'Zoom In', keys: { key: '>', mod: true, shift: true }, enabled: () => !!app.file && app.zoom < 4 && !app.maximizedId, run: () => app.zoomStep(1) },
   { id: 'view.zoomOut', label: 'Zoom Out', keys: { key: '<', mod: true, shift: true }, enabled: () => !!app.file && app.zoom > 0.25 && !app.maximizedId, run: () => app.zoomStep(-1) },
   { id: 'view.actualSize', label: 'Actual Size', enabled: () => !!app.file && app.zoom !== 1 && !app.maximizedId, run: () => void app.setZoom(1) },
-  { id: 'view.filter', label: 'Filter Rows…', enabled: () => focusTable()?.kind === 'table' && !app.readonly,
-    checked: () => { const t = focusTable(); return t?.kind === 'table' && !!t.filter?.on && t.filter.rules.length > 0; },
-    run: () => app.openFilter() },
-  { id: 'view.inspector', label: 'Inspector', keys: { key: 'i', mod: true, alt: true }, checked: () => app.showInspector, run: () => void (app.showInspector = !app.showInspector) },
+  { id: 'view.filter', label: 'Sort & Filter', checked: () => app.panel === 'filter', run: () => app.togglePanel('filter') },
+    { id: 'view.inspector', label: 'Inspector', keys: { key: 'i', mod: true, alt: true }, checked: () => app.panel === 'inspector', run: () => app.togglePanel('inspector') },
 ];
 
 export const commands: Record<string, Command> = Object.fromEntries(list.map((c) => [c.id, c]));

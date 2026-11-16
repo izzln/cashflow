@@ -54,6 +54,17 @@ record the difference below as the owner's decision and mention it; don't edit t
   Settings UI: `ColumnFormat`, ordered lists via `ReorderList`.
 - Conditions (`Condition`, `matchCond` / `condOps` in `columns.ts`) drive both `highlights` (first match wins, over the
   cell's own tint; `HighlightRules`) and the row filter `filter` (`FilterPopover`, `app.openFilter`).
+- **Home shows file icons (owner's decision, like Finder / Numbers; Stories' List is a list page):** a grid of page
+  pictures (`thumbnailSVG` in `src/lib/thumbnail.ts`: the first sheet's tables as shapes, no text; cached per device by
+  `updatedAt`) with the name below. Pointer: click selects, double-click opens; touch: tap opens; right-click /
+  long-press opens the file menu. A List view (the old list) is one segmented switch away, remembered per device.
+- New files start blank: one empty sheet, "Sheet 1" (`starterWorkbook`); an empty sheet shows a one-line hint.
+- **Side panel (owner's decision):** `app.panel` is 'inspector' | 'filter' | null. The Inspector has a Table / Cell
+  segmented control (`app.inspectorTab`; Stories' Inspector stacks one section per level): Table = name, opening
+  balance / import, conditional highlighting; Cell = cashflow row/cell/footer settings, a Table column's Data Format,
+  text alignment. The toolbar's Filter button shows Sort & Filter in the same panel (`SortFilter`): sort rules
+  (`DataTable.sort`, applied on change and with Sort Now; multi-key, stable) and the row filter. Structure edits
+  (rows, columns, delete table) live in the toolbar and menus only.
 - **Filtered Tables:** `dataTableModel` and the grid work on the shown rows (`visibleEntries`); row index r means
   `app.viewItems(t)[r]`, never `t.entries[r]`. Row operations map shown rows to entry ids. Rows added while filtered
   stay shown (`keepRows`) until the filter changes. The Total row sums shown rows; cashflow sources ignore filters.

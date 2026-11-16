@@ -37,7 +37,7 @@
     { key: 'zoom', kind: 'zoom', icon: 'zoomIn', label: 'Zoom', group: 'view', view: true },
     { key: 'inspector', kind: 'button', cmd: 'view.inspector', icon: 'inspector', label: 'Inspector', group: 'panel', view: true, pinned: true },
     // Owner's decision: Filter sits right of the Inspector and never moves into the overflow menu.
-    { key: 'filter', kind: 'button', cmd: 'view.filter', icon: 'filter', label: 'Filter', group: 'panel', pinned: true, title: 'Filter rows of the selected table' },
+    { key: 'filter', kind: 'button', cmd: 'view.filter', icon: 'filter', label: 'Filter', group: 'panel', view: true, pinned: true, title: 'Sort & Filter' },
   ];
   /** First to move into the overflow menu when space runs out. */
   const OVERFLOW_ORDER = ['deleteCol', 'colAfter', 'colBefore', 'deleteRow', 'rowBelow', 'rowAbove', 'fill', 'color', 'zoom', 'table', 'cashflow'];
@@ -170,8 +170,8 @@
       {/if}
     </div>
   {:else}
-    <button class="tool" data-tool={measuring ? undefined : it.key} class:active={(it.key === 'inspector' && app.showInspector) || (it.key === 'filter' && !!commands['view.filter'].checked?.())}
-      aria-pressed={it.key === 'inspector' ? app.showInspector : undefined}
+    <button class="tool" data-tool={measuring ? undefined : it.key} class:active={(it.key === 'inspector' && app.panel === 'inspector') || (it.key === 'filter' && app.panel === 'filter')}
+      aria-pressed={it.key === 'inspector' || it.key === 'filter' ? app.panel === it.key : undefined}
       onclick={() => it.cmd && run(it.cmd)} disabled={!on(it)} title={tip(it)}>
       <Icon name={iconOf(it)} />{#if labels}<span class="lbl">{labelFor(it)}</span>{/if}
     </button>

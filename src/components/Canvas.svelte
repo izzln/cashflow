@@ -130,6 +130,9 @@
       aria-label="Cell editor"
     />
   </div>
+  {#if !maxTable && !app.sheet.tables.length}
+    <p class="empty">{app.readonly ? 'This sheet is empty.' : 'This sheet is empty. Add a Cashflow or a Table from the toolbar.'}</p>
+  {/if}
   {#if app.lineGhost}
     <!-- A row/column drag off its table: what dropping it will make. -->
     <div class="ghost" style="left:{app.lineGhost.x + 12}px;top:{app.lineGhost.y + 12}px">{app.lineGhost.text}</div>
@@ -154,6 +157,17 @@
     inset: 0;
     /* The filled table scrolls inside itself; nothing (e.g. the parked cell editor) may scroll the canvas. */
     overflow: clip;
+  }
+  .empty {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 30%;
+    margin: 0;
+    padding: 0 16px;
+    text-align: center;
+    color: var(--muted);
+    pointer-events: none;
   }
   .ghost {
     position: fixed;
