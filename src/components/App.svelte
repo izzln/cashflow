@@ -8,6 +8,8 @@
   import Home from './Home.svelte';
   import Login from './Login.svelte';
   import FilesPopover from './FilesPopover.svelte';
+  import OptionsPopover from './OptionsPopover.svelte';
+  import FilterPopover from './FilterPopover.svelte';
   import TopBar from './TopBar.svelte';
   import PopupMenus from './PopupMenus.svelte';
   import ImportDialog from './ImportDialog.svelte';
@@ -288,6 +290,8 @@
     </div>
     <StatusBar />
     <FilesPopover />
+    <OptionsPopover />
+    <FilterPopover />
     <PopupMenus />
     {#if app.importing && importTable?.kind === 'table'}
       <ImportDialog dataTable={importTable} fileName={app.importing.fileName} sheets={app.importing.sheets} onclose={() => (app.importing = null)} />

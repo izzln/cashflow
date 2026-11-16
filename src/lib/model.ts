@@ -73,12 +73,73 @@ export interface CashflowTable extends TableBase {
   footers: FooterRow[];
 }
 
-export type ColumnType = 'date' | 'number' | 'text' | 'checkbox' | 'files';
+export type ColumnType = 'date' | 'number' | 'text' | 'checkbox' | 'files' | 'numbering' | 'select';
+
+/** Number columns: decimals (null = automatic, up to 2) and the thousands separator. */
+export interface NumberFormat {
+  decimals: number | null;
+  thousands: boolean;
+}
+
+/** One piece of a Numbering column's pattern: fixed text, or the row's number padded to `digits`. */
+export type NumberingPart = { id: string; kind: 'text'; text: string } | { id: string; kind: 'seq'; digits: number };
+
+/** Numbering columns: each row gets the next number when it is created and keeps it (like Feishu auto-numbers). */
+export interface Numbering {
+  parts: NumberingPart[];
+  /** The first number given out. */
+  start: number;
+}
+
+export interface SelectOption {
+  id: string;
+  label: string;
+}
 
 export interface Column {
   id: string;
   name: string;
   type: ColumnType;
+  /** number */
+  format?: NumberFormat;
+  /** numbering */
+  numbering?: Numbering;
+  /** select (pop-up menu): the choices, in menu order; cells store the chosen label. */
+  options?: SelectOption[];
+  /** select: option id that new rows start with (none = blank). */
+  defaultOption?: string | null;
+}
+
+/** A test on one column, used by row filters and conditional highlighting. */
+export type CondOp =
+  | 'eq' | 'ne' | 'gt' | 'ge' | 'lt' | 'le' | 'between'
+  | 'contains' | 'notContains' | 'is' | 'isNot' | 'begins' | 'ends'
+  | 'before' | 'after' | 'on'
+  | 'checked' | 'unchecked' | 'empty' | 'notEmpty';
+
+export interface Condition {
+  id: string;
+  col: string;
+  op: CondOp;
+  value: string;
+  /** Upper end for 'between'. */
+  value2: string;
+}
+
+/** Conditional highlighting: a tint applied to the cell (in the condition's column) or to the whole row. */
+export interface Highlight {
+  id: string;
+  cond: Condition;
+  target: 'cell' | 'row';
+  /** Tint preset id (see styles.ts). */
+  style: string;
+}
+
+/** Row filter: only rows matching all (or any) rules are shown while it is on. */
+export interface RowFilter {
+  on: boolean;
+  any: boolean;
+  rules: Condition[];
 }
 
 /** A file attached to a dataTable cell; the bytes are stored separately (see attachments). */
@@ -118,6 +179,9 @@ export interface DataTable extends TableBase {
   importMap?: ImportMap;
   /** Name of the last imported file, for the "re-import" hint. */
   importedFrom?: string;
+  /** Conditional highlighting rules, in order: the first match wins. */
+  highlights: Highlight[];
+  filter: RowFilter;
 }
 
 export type Table = CashflowTable | DataTable;
@@ -194,6 +258,8 @@ export function newDataTable(name: string, x = GRID * 2, y = GRID * 2): DataTabl
     entries: [0, 1, 2].map(() => newEntry()),
     styles: {},
     aligns: {},
+    highlights: [],
+    filter: { on: false, any: false, rules: [] },
   };
 }
 
@@ -283,14 +349,55 @@ function normImportMap(m: any): ImportMap | undefined {
   return { hasHeader: m.hasHeader !== false, sheet: str(m.sheet), cols, split, flip: !!m.flip };
 }
 
-const COLUMN_TYPES = ['date', 'number', 'text', 'checkbox', 'files'];
+const COLUMN_TYPES = ['date', 'number', 'text', 'checkbox', 'files', 'numbering', 'select'];
+const COND_OPS = ['eq', 'ne', 'gt', 'ge', 'lt', 'le', 'between', 'contains', 'notContains', 'is', 'isNot', 'begins', 'ends',
+  'before', 'after', 'on', 'checked', 'unchecked', 'empty', 'notEmpty'];
+
+/** Fresh numbering settings: "1", "2", … (one number part, no padding). */
+export function defaultNumbering(): Numbering {
+  return { parts: [{ id: uid(), kind: 'seq', digits: 1 }], start: 1 };
+}
+
+function normColumn(c: any): Column {
+  const type = (COLUMN_TYPES.includes(c.type) ? c.type : 'text') as ColumnType;
+  const col: Column = { id: c.id, name: str(c.name), type };
+  if (c.format && typeof c.format === 'object') {
+    const d = c.format.decimals;
+    col.format = { decimals: typeof d === 'number' && d >= 0 && d <= 6 ? Math.round(d) : null, thousands: c.format.thousands !== false };
+  }
+  if (c.numbering && typeof c.numbering === 'object') {
+    const parts = arr(c.numbering.parts)
+      .map((p): NumberingPart | null =>
+        p?.kind === 'text'
+          ? { id: str(p.id) || uid(), kind: 'text', text: str(p.text) }
+          : p?.kind === 'seq'
+            ? { id: str(p.id) || uid(), kind: 'seq', digits: Math.max(1, Math.min(10, Math.round(num(p.digits)) || 1)) }
+            : null,
+      )
+      .filter((p): p is NumberingPart => !!p);
+    col.numbering = { parts: parts.length ? parts : defaultNumbering().parts, start: Math.round(num(c.numbering.start ?? 1)) };
+  } else if (type === 'numbering') col.numbering = defaultNumbering();
+  if (Array.isArray(c.options)) {
+    const seen = new Set<string>();
+    col.options = arr(c.options)
+      .filter((o) => o && typeof o.label === 'string' && !seen.has(o.label) && seen.add(o.label))
+      .map((o) => ({ id: str(o.id) || uid(), label: o.label }));
+    if (typeof c.defaultOption === 'string' && col.options.some((o) => o.id === c.defaultOption)) col.defaultOption = c.defaultOption;
+  } else if (type === 'select') col.options = [];
+  return col;
+}
 
 function normColumns(v: unknown): Column[] {
   const seen = new Set<string>();
   const cols = arr(v)
     .filter((c) => c && typeof c.id === 'string' && !seen.has(c.id) && seen.add(c.id))
-    .map((c) => ({ id: c.id, name: str(c.name), type: (COLUMN_TYPES.includes(c.type) ? c.type : 'text') as ColumnType }));
+    .map(normColumn);
   return cols.length ? cols : defaultColumns();
+}
+
+function normCond(c: any): Condition | null {
+  if (!c || typeof c.col !== 'string') return null;
+  return { id: str(c.id) || uid(), col: c.col, op: COND_OPS.includes(c.op) ? c.op : 'contains', value: str(c.value), value2: str(c.value2) };
 }
 
 function normCell(type: ColumnType, v: unknown): CellData | undefined {
@@ -298,6 +405,7 @@ function normCell(type: ColumnType, v: unknown): CellData | undefined {
     case 'date':
       return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined;
     case 'number':
+    case 'numbering':
       return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
     case 'checkbox':
       return v === true ? true : undefined;
@@ -340,6 +448,19 @@ function normTable(t: any): Table {
       kind: 'table',
       columns,
       entries: arr(t.entries).map((e) => normEntry(e, columns)),
+      highlights: arr(t.highlights)
+        .map((h) => {
+          const cond = normCond(h?.cond);
+          return cond
+            ? { id: str(h.id) || uid(), cond, target: h.target === 'row' ? ('row' as const) : ('cell' as const), style: str(h.style, 'yellow') }
+            : null;
+        })
+        .filter((h): h is Highlight => !!h),
+      filter: {
+        on: !!t.filter?.on,
+        any: !!t.filter?.any,
+        rules: arr(t.filter?.rules).map(normCond).filter((c): c is Condition => !!c),
+      },
     };
     const im = normImportMap(t.importMap);
     if (im) l.importMap = im;

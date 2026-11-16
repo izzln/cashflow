@@ -23,20 +23,15 @@ Stories Web App wins.** Don't copy its rules here; this file only adds what is s
   `src/components/Toolbar.svelte`.
 - Cashflow markers: ⇄ from a table (`#1d63c7`), ƒ formula (`#6941c6`), negative in a linked/formula cell (`#b8336a`),
   ✎ number typed over a linked row (`#b54708`), `#ERR` for a formula/source error (reason in tooltip and Inspector).
-- **Touch selection (owner's decision, like Numbers; Stories' Input model says a tap also shows the EditMenu):**
-  the first tap on a cell, row/column tab or table title only selects; a tap on the selection shows or hides the
-  EditMenu; a double-tap edits. `app.menuClosedAt` lets the tap that closed the menu not reopen it.
+- Touch selection (Stories: Input model): `app.menuClosedAt` lets the tap that closed the EditMenu not reopen it;
+  cells in `TableFrame` (`onCellDown`/`onUp`), tabs in `onLineDown`, the table title in `onTitleDown`.
 - Cashflow grid: label column 200px, month columns 100px, two header rows (year, month; centred).
   Header-row text is always centred in both kinds of table (owner's decision), whatever the column type.
 - Canvas: tables snap to a 20px grid; a 40px margin surrounds the zoomed canvas. Zoom 25–400 %
   (steps 25, 50, 75, 100, 125, 150, 200, 300, 400), per sheet (localStorage per file; scroll per sheet while open).
-- **Row/column tabs are part of every table (owner's decision):** the first column is the row-tab column
-  (`ROWTAB_W` 28px / 36px touch; row numbers, `th[data-rowtab]`, not a model column), then the header column.
-  The header row is the column tab (`th[data-coltab]`): click selects the column, drag reorders (Tables),
-  double-click / double-tap renames. Cashflow: a month header selects its month, a year header all its months
-  (`data-years`), the corner over the labels the label column; the far corner (`data-tabcorner`) the whole table.
-  Row tabs drag to reorder or onto the canvas for a new table (⌥ copies). Input is handled in `TableFrame`
-  (`onLineDown`); the drag label is `app.lineGhost` (drawn by Canvas). They scale with the zoom.
+- Row/column tabs (Stories: DataTable, deviation 6): `ROWTAB_W`; `th[data-rowtab]` (not a model column),
+  `th[data-coltab]`, Cashflow `data-years` and the label corner (`data-coltab="0"`), `data-tabcorner`. Input in
+  `TableFrame` (`onLineDown`); the drag label is `app.lineGhost` (drawn by Canvas). Cashflow months don't reorder.
 - Fill Window (one table fills the canvas, headers and first column pinned): Esc never leaves it; only Restore does.
   Each sheet remembers its filled table, per file across closing it (localStorage, like zoom and the active
   sheet). Fill / Restore zooms the card from its old rectangle (`app.fillFrom`, `zoomFrom` in `src/lib/motion.ts`). Columns are fitted to the width (`fitColumns` in `src/lib/grid.ts`):
@@ -47,13 +42,19 @@ Stories Web App wins.** Don't copy its rules here; this file only adds what is s
   (`aligns`, keyed like `styles`); ⌘{ ⌘| ⌘}, the Format popover, the Align submenu and the Inspector.
 - Deletes are undoable and show a notice with Undo. Files (Home) and snapshots (File menu, which also shows Undo
   in place) are removed for good only when the notice expires or the page/file closes.
-- Clipboard: copy writes TSV plus HTML whose cells carry `data-cf-s` / `data-cf-a` (tint, alignment), so a paste
-  into this app restores them (`formatsFromHTML`; the Clipboard-API paste matches this window's last copy).
-  iPad Safari copies only from a real text selection: `execCopy` selects a hidden copy of the text and runs
-  `execCommand('copy')` inside the tap/key press (async Clipboard API as fallback); App routes ⌘C/⌘X there and
-  runs Paste itself when no paste event follows ⌘V. Paste uses `readText` (Safari's Paste bubble), else this
-  window's last copy (`app.copiedText`). `beforecopy/beforecut/beforepaste` are cancelled for Mac Safari's menu.
+- Clipboard (Stories: Clipboard): `src/lib/clipboard.ts` (`toHTML` with `data-cf-s` / `data-cf-a`,
+  `formatsFromHTML`), `execCopy` / `pasteClipboard` in `commands.ts`, ⌘C/⌘X/⌘V and the `before*` events in App,
+  `app.copiedText` / `copyReachedSystem` for the in-window fallback.
 - Size class: `app.sizeClass` from the measured container width (`app.width`); CSS uses `max-width: 599px`.
+- Column formats (Stories: DataTable): `Column.format` (number), `numbering` (parts + start; cells hold the row's
+  number, given once by `assignNumbers`, which `app.change()` runs on every Table), `options` / `defaultOption`
+  (Pop-Up Menu; cells hold the label; `newEntryFor` applies the default; `OptionsPopover` edits a cell).
+  Settings UI: `ColumnFormat`, ordered lists via `ReorderList`.
+- Conditions (`Condition`, `matchCond` / `condOps` in `columns.ts`) drive both `highlights` (first match wins, over the
+  cell's own tint; `HighlightRules`) and the row filter `filter` (`FilterPopover`, `app.openFilter`).
+- **Filtered Tables:** `dataTableModel` and the grid work on the shown rows (`visibleEntries`); row index r means
+  `app.viewItems(t)[r]`, never `t.entries[r]`. Row operations map shown rows to entry ids. Rows added while filtered
+  stay shown (`keepRows`) until the filter changes. The Total row sums shown rows; cashflow sources ignore filters.
 
 ## Commands
 - `npm test` (vitest, tests/), `npm run check` (svelte-check + worker tsc), `npm run build`

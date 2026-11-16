@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app, ZOOM_STEPS } from '../lib/store.svelte';
-  import { commands, isEnabled, labelOf, run, shortcutText } from '../lib/commands';
+  import { commands, isDestructive, isEnabled, labelOf, run, shortcutText } from '../lib/commands';
   import { STYLES } from '../lib/styles';
   import Icon, { type IconName } from './Icon.svelte';
   import { fadeOut } from '../lib/motion';
@@ -36,6 +36,8 @@
     { key: 'fill', kind: 'button', cmd: 'table.maximize', icon: 'fill', label: 'Fill Window', group: 'view', view: true },
     { key: 'zoom', kind: 'zoom', icon: 'zoomIn', label: 'Zoom', group: 'view', view: true },
     { key: 'inspector', kind: 'button', cmd: 'view.inspector', icon: 'inspector', label: 'Inspector', group: 'panel', view: true, pinned: true },
+    // Owner's decision: Filter sits right of the Inspector and never moves into the overflow menu.
+    { key: 'filter', kind: 'button', cmd: 'view.filter', icon: 'filter', label: 'Filter', group: 'panel', pinned: true, title: 'Filter rows of the selected table' },
   ];
   /** First to move into the overflow menu when space runs out. */
   const OVERFLOW_ORDER = ['deleteCol', 'colAfter', 'colBefore', 'deleteRow', 'rowBelow', 'rowAbove', 'fill', 'color', 'zoom', 'table', 'cashflow'];
@@ -168,7 +170,7 @@
       {/if}
     </div>
   {:else}
-    <button class="tool" class:active={it.key === 'inspector' && app.showInspector}
+    <button class="tool" data-tool={measuring ? undefined : it.key} class:active={(it.key === 'inspector' && app.showInspector) || (it.key === 'filter' && !!commands['view.filter'].checked?.())}
       aria-pressed={it.key === 'inspector' ? app.showInspector : undefined}
       onclick={() => it.cmd && run(it.cmd)} disabled={!on(it)} title={tip(it)}>
       <Icon name={iconOf(it)} />{#if labels}<span class="lbl">{labelFor(it)}</span>{/if}
@@ -182,7 +184,7 @@
     <div class="backdrop" onclick={closeAll}></div>
   {/if}
   {#each layout.shown as it, i (it.key)}
-    {#if it.pinned && layout.hidden.length}
+    {#if it.pinned && layout.hidden.length && it === layout.shown.find((x) => x.pinned)}
       {#if i > 0}<span class="sep"></span>{/if}
       <div class="pop-wrap">
         <button class="tool" onclick={() => { const o = !moreOpen; closeAll(); moreOpen = o; }} aria-haspopup="menu" aria-expanded={moreOpen}
@@ -203,7 +205,7 @@
                   <div class="inline">{@render formatBody()}</div>
                 {/if}
               {:else}
-                <button role="menuitem" disabled={!on(h)} onclick={() => { if (h.cmd) run(h.cmd); closeAll(); }}>
+                <button role="menuitem" class:danger={!!h.cmd && isDestructive(commands[h.cmd])} disabled={!on(h)} onclick={() => { if (h.cmd) run(h.cmd); closeAll(); }}>
                   <Icon name={iconOf(h)} /> {labelFor(h)} <span class="keys">{h.cmd ? shortcutText(commands[h.cmd].keys) : ''}</span>
                 </button>
               {/if}
@@ -405,6 +407,14 @@
   .more > button:hover:not(:disabled),
   .more > button:active:not(:disabled) {
     background: var(--accent);
+    color: var(--on-accent);
+  }
+  .more > button.danger {
+    color: var(--neg);
+  }
+  .more > button.danger:hover:not(:disabled),
+  .more > button.danger:active:not(:disabled) {
+    background: var(--neg);
     color: var(--on-accent);
   }
   .zooms button.on {
