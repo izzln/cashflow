@@ -14,6 +14,8 @@ https://claude.ai/artifact/MP8LwEVe4W4Ffw9RFyb7ij (a private Design System artif
 `action: "read"` with `path`). Before UI work read `project/README.md`, `project/tokens.json` and the
 `project/components/<Name>/README.md` of each component you touch. **Where this file or the code disagrees with it,
 Stories Web App wins.** Don't copy its rules here; this file only adds what is specific to this app.
+**Never change Stories Web App unless the owner asks for it in so many words.** When the app needs to differ from it,
+record the difference below as the owner's decision and mention it; don't edit the design system to match.
 
 ### App-specific UI (not in the design system)
 - **Accent override (owner's decision):** the accent is green like Numbers — `--accent: #1b7a43`,

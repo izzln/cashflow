@@ -22,6 +22,9 @@ export const FIXED_FOOTERS = [
 
 const TYPE_WIDTH: Record<ColumnType, number> = { date: 112, number: 120, text: 160, checkbox: 90, files: 190, numbering: 110, select: 140 };
 
+/** Cell kinds that take a text alignment (numbers stay right, checkboxes centred). */
+export const ALIGNABLE: string[] = ['text', 'date', 'label', 'numbering', 'select'];
+
 /**
  * The rows a Table shows: all of them, or those passing its row filter while it is on.
  * `keep` holds rows added while filtering, which stay in view until the filter changes.

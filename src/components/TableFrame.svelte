@@ -321,6 +321,19 @@
       return;
     }
     if (onLineDown(e)) return;
+    // A Pop-Up Menu cell's button opens its choices at once.
+    if ((e.target as Element).closest('[data-pick]')) {
+      const pp = posOf(e.target as Element);
+      if (pp && e.button !== 2) {
+        e.preventDefault();
+        e.stopPropagation();
+        app.commitEdit();
+        app.menu = null;
+        app.select(table.id, pp);
+        app.startEdit();
+        return;
+      }
+    }
     const p = posOf(e.target as Element);
     if (!p) return;
     if (app.editing) app.commitEdit();

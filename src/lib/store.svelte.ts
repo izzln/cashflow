@@ -52,6 +52,7 @@ import {
   columnWidth,
   assignNumbers,
   visibleEntries,
+  ALIGNABLE,
   styleKey,
   type GridModel,
   type Pos,
@@ -1951,14 +1952,14 @@ class AppState {
     });
   }
 
-  /** Cells under the selection that can take a text alignment (text, date and row labels). */
+  /** Cells under the selection that can take a text alignment (text, date, numbering, pop-up and row labels). */
   private alignableCells(): { t: Table; keys: string[] } | null {
     const sel = this.selection;
     const t = this.table(sel?.tableId);
     if (!sel || !t) return null;
     const m = this.model(t);
     const keys = cellsInRanges(sel.ranges)
-      .filter((p) => p.r < m.body && ['text', 'date', 'label'].includes(m.cellType(p)))
+      .filter((p) => p.r < m.body && ALIGNABLE.includes(m.cellType(p)))
       .map((p) => styleKey(m.rowId(p.r), m.colKey(p.c)));
     return { t, keys };
   }
@@ -1974,7 +1975,7 @@ class AppState {
     if (!sel || !t) return null;
     const m = this.model(t);
     const p = sel.anchor;
-    if (p.r >= m.body || !['text', 'date', 'label'].includes(m.cellType(p))) return null;
+    if (p.r >= m.body || !ALIGNABLE.includes(m.cellType(p))) return null;
     return t.aligns[styleKey(m.rowId(p.r), m.colKey(p.c))] ?? 'left';
   }
 
@@ -2087,7 +2088,7 @@ class AppState {
             const k = styleKey(m.rowId(p.r), m.colKey(p.c));
             if (f.s) t.styles[k] = f.s;
             else delete t.styles[k];
-            if (['text', 'date', 'label'].includes(m.cellType(p))) {
+            if (ALIGNABLE.includes(m.cellType(p))) {
               if (f.a && f.a !== 'left') t.aligns[k] = f.a;
               else delete t.aligns[k];
             }
