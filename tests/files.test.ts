@@ -53,7 +53,7 @@ describe('LocalFileStore', () => {
     const f = await s.create('F');
     const snap = await s.takeSnapshot(f.id, 'Board meeting', new Date(2026, 10, 7));
     expect(snap).toMatchObject({ label: 'Board meeting', kind: 'manual', asOf: '2026-11' });
-    expect((await s.loadSnapshot(f.id, snap.id))?.wb.sheets[0].name).toBe('Operating');
+    expect((await s.loadSnapshot(f.id, snap.id))?.wb.sheets[0].name).toBe('Sheet 1');
     await s.deleteSnapshot(f.id, snap.id);
     expect(await s.listSnapshots(f.id)).toEqual([]);
   });
@@ -93,7 +93,7 @@ describe('month-end snapshots', () => {
     changed.sheets[0].name = 'Changed in November';
     await s.save(id, changed, meta.rev);
     const [snap] = await s.listSnapshots(id);
-    expect((await s.loadSnapshot(id, snap.id))?.wb.sheets[0].name).toBe('Operating');
+    expect((await s.loadSnapshot(id, snap.id))?.wb.sheets[0].name).toBe('Sheet 1');
     expect((await s.load(id))?.wb.sheets[0].name).toBe('Changed in November');
   });
 });

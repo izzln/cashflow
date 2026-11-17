@@ -173,6 +173,7 @@
             class:wrap={wraps(c)}
             class:neg={col.type === 'number' && typeof v === 'number' && v < 0 && !table.styles[styleKey(e.id, col.id)] && !hl.get(e.id)?.[col.id]}
             class:numbered={col.type === 'numbering'}
+            class:popup={col.type === 'select'}
             class:sel={selected.has(`${r},${c}`)}
             class:anchor={anchor(r, c)}
             data-files={col.type === 'files' ? '' : undefined}
@@ -198,7 +199,11 @@
             {:else if col.type === 'files'}
               {#each files(v) as f (f.id)}<span class="chip" title={f.name}><Icon name="clip" size={12} /> {f.name}</span>{/each}
             {:else if col.type === 'select'}
-              {#if v !== undefined}<span class="pick">{v}</span>{/if}{#if anchor(r, c) && !app.readonly}<span class="caret" aria-hidden="true">▾</span>{/if}
+              {#if v !== undefined}<span class="pick">{v}</span>{/if}
+              {#if !app.readonly}
+                <!-- Opens the choices with one click or tap; shown on the selected cell (and on hover). -->
+                <span class="pickbtn" class:shown={anchor(r, c)} data-pick role="button" tabindex="-1" aria-label={`Choose ${col.name}`} title="Choose"><Icon name="chevron" size={14} /></span>
+              {/if}
             {:else}{cellDisplay(col, v)}{/if}
           </td>
         {/each}
@@ -268,13 +273,44 @@
     padding: 0 8px;
     line-height: 20px;
   }
-  .caret {
+  /* Pop-Up Menu cells: room on the right for the menu button. */
+  td.popup {
+    padding-right: 30px;
+  }
+  .pickbtn {
     position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 28px;
+    display: none;
+    align-items: center;
+    justify-content: center;
     color: var(--muted);
-    font-size: 11px;
+    border-left: 1px solid var(--line);
+    background: transparent;
+    cursor: pointer;
+    touch-action: none;
+  }
+  .pickbtn.shown {
+    display: flex;
+  }
+  @media (hover: hover) {
+    td.popup:hover .pickbtn {
+      display: flex;
+    }
+    .pickbtn:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+  }
+  @media (pointer: coarse) {
+    td.popup {
+      padding-right: 38px;
+    }
+    .pickbtn {
+      width: var(--touch-target);
+    }
   }
   td.numbered {
     color: var(--muted);
@@ -288,6 +324,8 @@
     font-weight: 600;
     color: var(--text);
     background: var(--panel);
+    /* Header text is always centred, while renaming too. */
+    text-align: center;
     border: 1px solid var(--accent);
     border-radius: var(--radius-4);
     padding: 1px 4px;

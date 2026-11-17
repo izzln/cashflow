@@ -5,6 +5,8 @@
   import { downloadText } from '../lib/download';
   import { session } from '../lib/session.svelte';
   import StatusBar from './StatusBar.svelte';
+  import { thumbnailSVG } from '../lib/thumbnail';
+  import { fadeOut } from '../lib/motion';
 
   let files = $state<FileMeta[]>([]);
   let loaded = $state(false);
@@ -24,7 +26,107 @@
       error = (e as Error).message || 'Could not load your files.';
     }
     loaded = true;
+    void loadThumbs(files);
   }
+
+  // ----- icons (the default view, like Finder and Numbers) or a list -----
+  const VIEW_KEY = 'cashflow-allseeing.homeView';
+  const THUMB_KEY = 'cashflow-allseeing.thumb.';
+  function readView(): 'icons' | 'list' {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'icons';
+    } catch {
+      return 'icons';
+    }
+  }
+  let view = $state<'icons' | 'list'>(readView());
+  function setView(v: 'icons' | 'list') {
+    view = v;
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // Not remembered; fine.
+    }
+  }
+
+  /** Each file's picture, drawn from its first sheet and cached on this device until the file changes. */
+  let thumbs = $state<Record<string, string>>({});
+  async function loadThumbs(list: FileMeta[]) {
+    for (const f of list) {
+      const key = THUMB_KEY + f.id;
+      try {
+        const cached = JSON.parse(localStorage.getItem(key) ?? 'null');
+        if (cached && cached.at === f.updatedAt && typeof cached.svg === 'string') {
+          thumbs[f.id] = cached.svg;
+          continue;
+        }
+      } catch {
+        // Fall through and draw it.
+      }
+      try {
+        const doc = await fileStore.load(f.id);
+        if (!doc) continue;
+        const svg = thumbnailSVG(doc.wb);
+        thumbs[f.id] = svg;
+        try {
+          localStorage.setItem(key, JSON.stringify({ at: f.updatedAt, svg }));
+        } catch {
+          // Storage full: draw it again next time.
+        }
+      } catch {
+        // Offline or gone: keep the plain page.
+      }
+    }
+  }
+
+  // ----- selection and the file menu (right-click, long-press) -----
+  let selectedId = $state<string | null>(null);
+  let fileMenu = $state<{ f: FileMeta; x: number; y: number } | null>(null);
+  /** The menu last shown: it keeps the closing menu's contents while it fades out. */
+  let lastMenu = $state<{ f: FileMeta; x: number; y: number } | null>(null);
+  let menuOpenedAt = 0;
+  let press: { timer: ReturnType<typeof setTimeout>; x: number; y: number; fired: boolean } | null = null;
+
+  function openFileMenu(f: FileMeta, x: number, y: number) {
+    selectedId = f.id;
+    fileMenu = { f, x: Math.max(8, Math.min(x, window.innerWidth - 240)), y: Math.max(8, Math.min(y, window.innerHeight - 280)) };
+    lastMenu = fileMenu;
+    menuOpenedAt = performance.now();
+  }
+  function closeFileMenu() {
+    fileMenu = null;
+  }
+  function menuBackdrop() {
+    // The tap that opened the menu (a long-press) is followed by a click: ignore it.
+    if (performance.now() - menuOpenedAt > 400) closeFileMenu();
+  }
+
+  function tileDown(e: PointerEvent, f: FileMeta) {
+    if (e.button === 2 || renamingId === f.id) return;
+    const { clientX: x, clientY: y } = e;
+    if (press) clearTimeout(press.timer);
+    press = { x, y, fired: false, timer: setTimeout(() => {
+      if (press) press.fired = true;
+      openFileMenu(f, x, y);
+    }, 550) };
+  }
+  function tileMove(e: PointerEvent) {
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 8) {
+      clearTimeout(press.timer);
+      press = null;
+    }
+  }
+  /** Pointer: a click selects, a double-click opens. Touch: a tap opens (as on iPad). */
+  function tileUp(e: PointerEvent, f: FileMeta) {
+    const p = press;
+    press = null;
+    if (!p) return;
+    clearTimeout(p.timer);
+    if (p.fired || renamingId === f.id) return;
+    if (e.pointerType === 'touch') open(f.id);
+    else selectedId = f.id;
+  }
+
 
   /** Run a file action, turning failures into a message instead of a silent no-op. */
   async function attempt(fn: () => Promise<unknown>) {
@@ -153,6 +255,7 @@
   }
 
   const fmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  const fmtDay = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
   onMount(() => {
     refresh();
@@ -199,31 +302,89 @@
     <p class="empty">No files yet. Create one, or import a downloaded file.</p>
   {/if}
 
-  <ul class="list">
-    {#each shown as f (f.id)}
-      <li>
-        {#if renamingId === f.id}
-          <input class="rename" bind:this={renameEl} bind:value={draft} aria-label="File name"
-            onblur={() => finishRename(true)}
-            onkeydown={(e) => {
-              if (e.isComposing || e.keyCode === 229) return;
-              if (e.key === 'Enter') finishRename(true);
-              if (e.key === 'Escape') finishRename(false);
-            }} />
-        {:else}
-          <a class="name" href="#/f/{f.id}" ondblclick={(e) => { e.preventDefault(); startRename(f); }}>{f.name}</a>
-        {/if}
-        <span class="when">Edited {fmt.format(f.updatedAt)}</span>
-        <span class="buttons">
-          <a class="btn" href="#/f/{f.id}" target="_blank" rel="noopener" title="Open in a new window">New Window</a>
-          <button onclick={() => startRename(f)}>Rename…</button>
-          <button onclick={() => duplicate(f)}>Duplicate</button>
-          <button onclick={() => download(f)}>Download</button>
-          <button class="danger" onclick={() => remove(f)}>Delete</button>
-        </span>
-      </li>
-    {/each}
-  </ul>
+  {#if shown.length}
+    <div class="viewbar">
+      <div class="segmented" role="radiogroup" aria-label="View">
+        <button role="radio" aria-checked={view === 'icons'} class:on={view === 'icons'} onclick={() => setView('icons')}>Icons</button>
+        <button role="radio" aria-checked={view === 'list'} class:on={view === 'list'} onclick={() => setView('list')}>List</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if view === 'icons'}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+    <ul class="icons" onclick={(e) => e.target === e.currentTarget && (selectedId = null)}>
+      {#each shown as f (f.id)}
+        <li class="tile" class:sel={selectedId === f.id}>
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="hit" title={f.name}
+            onpointerdown={(e) => tileDown(e, f)} onpointermove={tileMove} onpointerup={(e) => tileUp(e, f)}
+            onpointercancel={() => { if (press) clearTimeout(press.timer); press = null; }}
+            ondblclick={() => open(f.id)}
+            oncontextmenu={(e) => { e.preventDefault(); openFileMenu(f, e.clientX, e.clientY); }}>
+            <div class="thumb">
+              {#if thumbs[f.id]}{@html thumbs[f.id]}{/if}
+            </div>
+            {#if renamingId === f.id}
+              <input class="rename tilename" bind:this={renameEl} bind:value={draft} aria-label="File name"
+                onpointerdown={(e) => e.stopPropagation()}
+                onblur={() => finishRename(true)}
+                onkeydown={(e) => {
+                  if (e.isComposing || e.keyCode === 229) return;
+                  if (e.key === 'Enter') finishRename(true);
+                  if (e.key === 'Escape') finishRename(false);
+                }} />
+            {:else}
+              <span class="fname">{f.name}</span>
+            {/if}
+            <span class="fwhen">{fmtDay.format(f.updatedAt)}</span>
+          </div>
+        </li>
+      {/each}
+    </ul>
+  {:else}
+    <ul class="list">
+      {#each shown as f (f.id)}
+        <li oncontextmenu={(e) => { e.preventDefault(); openFileMenu(f, e.clientX, e.clientY); }}>
+          {#if renamingId === f.id}
+            <input class="rename" bind:this={renameEl} bind:value={draft} aria-label="File name"
+              onblur={() => finishRename(true)}
+              onkeydown={(e) => {
+                if (e.isComposing || e.keyCode === 229) return;
+                if (e.key === 'Enter') finishRename(true);
+                if (e.key === 'Escape') finishRename(false);
+              }} />
+          {:else}
+            <a class="name" href="#/f/{f.id}" ondblclick={(e) => { e.preventDefault(); startRename(f); }}>{f.name}</a>
+          {/if}
+          <span class="when">Edited {fmt.format(f.updatedAt)}</span>
+          <span class="buttons">
+            <a class="btn" href="#/f/{f.id}" target="_blank" rel="noopener" title="Open in a new window">New Window</a>
+            <button onclick={() => startRename(f)}>Rename…</button>
+            <button onclick={() => duplicate(f)}>Duplicate</button>
+            <button onclick={() => download(f)}>Download</button>
+            <button class="danger" onclick={() => remove(f)}>Delete</button>
+          </span>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  {#if fileMenu && lastMenu}
+    {@const f = lastMenu.f}
+    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+    <div class="backdrop" onclick={menuBackdrop} oncontextmenu={(e) => { e.preventDefault(); closeFileMenu(); }}></div>
+    <ul class="menu" role="menu" aria-label={f.name} style="left:{lastMenu.x}px;top:{lastMenu.y}px" out:fadeOut>
+      <li role="none"><button role="menuitem" onclick={() => { closeFileMenu(); open(f.id); }}>Open</button></li>
+      <li role="none"><a role="menuitem" href="#/f/{f.id}" target="_blank" rel="noopener" onclick={closeFileMenu}>Open in New Window</a></li>
+      <li class="sep" role="separator"></li>
+      <li role="none"><button role="menuitem" onclick={() => { closeFileMenu(); startRename(f); }}>Rename…</button></li>
+      <li role="none"><button role="menuitem" onclick={() => { closeFileMenu(); duplicate(f); }}>Duplicate</button></li>
+      <li role="none"><button role="menuitem" onclick={() => { closeFileMenu(); download(f); }}>Download a Copy</button></li>
+      <li class="sep" role="separator"></li>
+      <li role="none"><button role="menuitem" class="danger" onclick={() => { closeFileMenu(); remove(f); }}>Delete</button></li>
+    </ul>
+  {/if}
 
   <p class="note">
     {#if session.mode === 'remote'}
@@ -267,6 +428,162 @@
     background: var(--accent);
     border-color: var(--accent);
     color: var(--on-accent);
+  }
+  .viewbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+  }
+  .segmented {
+    display: flex;
+  }
+  .segmented button {
+    border-radius: 0;
+    margin-left: -1px;
+  }
+  .segmented button:first-child {
+    border-radius: var(--radius-6) 0 0 var(--radius-6);
+    margin-left: 0;
+  }
+  .segmented button:last-child {
+    border-radius: 0 var(--radius-6) var(--radius-6) 0;
+  }
+  .segmented button.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    position: relative;
+  }
+  /* Icon view (owner's decision, like Finder / Numbers): a page picture with the name below. */
+  .icons {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 18px 12px;
+  }
+  .tile {
+    display: flex;
+    justify-content: center;
+  }
+  .hit {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 150px;
+    padding: 8px 6px;
+    border-radius: var(--radius-10);
+    cursor: default;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  .thumb {
+    width: 128px;
+    height: 96px;
+    border-radius: var(--radius-6);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-rest);
+    overflow: hidden;
+  }
+  .thumb :global(svg) {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .fname {
+    max-width: 100%;
+    text-align: center;
+    overflow-wrap: anywhere;
+    line-height: 1.3;
+    padding: 1px 6px;
+    border-radius: var(--radius-4);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .fwhen {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .tile.sel .thumb {
+    outline: 3px solid var(--accent-soft);
+    outline-offset: 2px;
+  }
+  .tile.sel .fname {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .tilename {
+    width: 100%;
+    text-align: center;
+  }
+  /* The file menu (right-click or long-press): Stories ContextMenu rows. */
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-popup) - 50);
+  }
+  .menu {
+    position: fixed;
+    z-index: var(--z-popup);
+    list-style: none;
+    margin: 0;
+    padding: 5px;
+    min-width: var(--menu-min-w);
+    background: var(--menu-bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-10);
+    box-shadow: var(--shadow-menu);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+  }
+  .menu button,
+  .menu a {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    border: none;
+    background: none;
+    border-radius: var(--radius-5);
+    padding: 4px 8px 4px 28px;
+    min-height: var(--row-h);
+    text-align: left;
+    color: inherit;
+    text-decoration: none;
+    cursor: default;
+  }
+  @media (pointer: coarse) {
+    .menu button,
+    .menu a {
+      min-height: var(--touch-target);
+    }
+  }
+  .menu button:hover,
+  .menu button:active,
+  .menu a:hover,
+  .menu a:active {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .menu button.danger {
+    color: var(--neg);
+  }
+  .menu button.danger:hover,
+  .menu button.danger:active {
+    background: var(--neg);
+    color: var(--on-accent);
+  }
+  .menu .sep {
+    height: 1px;
+    background: var(--line);
+    margin: 4px 6px;
   }
   .list {
     list-style: none;

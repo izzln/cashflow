@@ -38,11 +38,21 @@
   function close() {
     app.filesCell = null;
   }
+
+  // A tap that opens this (e.g. a double-tap) is followed by the browser's click on whatever is now
+  // under the finger — the backdrop. Ignore clicks right after opening (Stories: Input model).
+  let openedAt = 0;
+  $effect(() => {
+    if (target) openedAt = performance.now();
+  });
+  function backdropClick() {
+    if (performance.now() - openedAt > 400) close();
+  }
 </script>
 
 {#if target && column}
   <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-  <div class="backdrop" onclick={close}></div>
+  <div class="backdrop" onclick={backdropClick}></div>
   <div
     class="pop"
     class:sheet={!place}

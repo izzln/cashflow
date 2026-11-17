@@ -135,6 +135,13 @@ export interface Highlight {
   style: string;
 }
 
+/** One sort key of a Table's Sort rules (first rule first). */
+export interface SortRule {
+  id: string;
+  col: string;
+  desc: boolean;
+}
+
 /** Row filter: only rows matching all (or any) rules are shown while it is on. */
 export interface RowFilter {
   on: boolean;
@@ -182,6 +189,8 @@ export interface DataTable extends TableBase {
   /** Conditional highlighting rules, in order: the first match wins. */
   highlights: Highlight[];
   filter: RowFilter;
+  /** Sort rules (Sort & Filter panel), applied when they change and with Sort Now. */
+  sort: SortRule[];
 }
 
 export type Table = CashflowTable | DataTable;
@@ -260,6 +269,7 @@ export function newDataTable(name: string, x = GRID * 2, y = GRID * 2): DataTabl
     aligns: {},
     highlights: [],
     filter: { on: false, any: false, rules: [] },
+    sort: [],
   };
 }
 
@@ -267,12 +277,11 @@ export function newSheet(name: string): Sheet {
   return { id: uid(), name, tables: [newCashflow('Cashflow 1')] };
 }
 
+/** A new file: one empty sheet, "Sheet 1" (as in Numbers' blank template, minus the table). */
 export function starterWorkbook(): Workbook {
-  const t = newCashflow('Main account');
-  t.rows = ['Sales receipts', 'Payroll', 'Rent', 'Suppliers', 'Taxes'].map((l) => newRow(l));
   return {
     schema: 1,
-    sheets: [{ id: uid(), name: 'Operating', tables: [t] }],
+    sheets: [{ id: uid(), name: 'Sheet 1', tables: [] }],
     settings: { ...DEFAULT_SETTINGS },
   };
 }
@@ -456,6 +465,9 @@ function normTable(t: any): Table {
             : null;
         })
         .filter((h): h is Highlight => !!h),
+      sort: arr(t.sort)
+        .filter((r) => r && typeof r.col === 'string')
+        .map((r) => ({ id: str(r.id) || uid(), col: r.col, desc: !!r.desc })),
       filter: {
         on: !!t.filter?.on,
         any: !!t.filter?.any,

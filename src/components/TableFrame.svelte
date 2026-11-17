@@ -316,11 +316,23 @@
       e.preventDefault();
       e.stopPropagation();
       app.commitEdit();
-      const r = fb.getBoundingClientRect();
-      app.openFilter(table.id, fb.dataset.filter, { x: r.right + 8, y: r.bottom + 6 });
+      app.openFilter(table.id, fb.dataset.filter);
       return;
     }
     if (onLineDown(e)) return;
+    // A Pop-Up Menu cell's button opens its choices at once.
+    if ((e.target as Element).closest('[data-pick]')) {
+      const pp = posOf(e.target as Element);
+      if (pp && e.button !== 2) {
+        e.preventDefault();
+        e.stopPropagation();
+        app.commitEdit();
+        app.menu = null;
+        app.select(table.id, pp);
+        app.startEdit();
+        return;
+      }
+    }
     const p = posOf(e.target as Element);
     if (!p) return;
     if (app.editing) app.commitEdit();
@@ -563,10 +575,7 @@
       <!-- A filtered Table says so in its title; tap to change the filter. -->
       <button class="filtered" title="Rows are filtered — change the filter"
         onpointerdown={(e) => e.stopPropagation()}
-        onclick={(e) => {
-          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          app.openFilter(table.id, undefined, { x: r.right, y: r.bottom + 6 });
-        }}><Icon name="filter" size={14} /> {app.viewItems(table).length} of {table.entries.length}</button>
+        onclick={() => app.openFilter(table.id)}><Icon name="filter" size={14} /> {app.viewItems(table).length} of {table.entries.length}</button>
     {/if}
     <button
       class="max-btn"
