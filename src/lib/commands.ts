@@ -268,6 +268,9 @@ const list: Command[] = [
   } },
   { id: 'table.import', label: 'Import CSV or Excel…', enabled: () => editable() && dataTableFocused(), run: () => pickImportFile(focusTable()!.id) },
   { id: 'table.duplicate', label: 'Duplicate', enabled: () => editable() && !!focusTable(), run: () => app.duplicateTable(focusTable()!.id) },
+  { id: 'table.fitColumns', label: () => (app.selectedColumnIds().length > 1 ? 'Fit Widths to Content' : 'Fit Width to Content'),
+    enabled: () => editable() && app.selectedColumnIds().length > 0,
+    run: () => { const t = focusTable(); if (t) app.fitColumnWidths(t.id, app.selectedColumnIds()); } },
   { id: 'table.delete', destructive: true, label: () => deleteTableLabel(), enabled: () => editable() && !!focusTable(), run: () => app.deleteTable(focusTable()!.id) },
 
   // Format
@@ -354,7 +357,7 @@ export function contextItems(target: MenuTarget): MenuItem[] {
       'edit.cut', 'edit.copy', 'edit.paste', 'edit.delete', '-', ALIGN, COLORS];
   }
   if (target === 'column' || (target === 'columns' && dataTable)) {
-    return [...UNDO, 'table.renameColumn', FORMATS, '-', 'insert.colBefore', 'insert.colAfter', 'table.deleteColumns', '-',
+    return [...UNDO, 'table.renameColumn', 'table.fitColumns', FORMATS, '-', 'insert.colBefore', 'insert.colAfter', 'table.deleteColumns', '-',
       'table.sortAsc', 'table.sortDesc', '-', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.delete', '-', ALIGN, COLORS];
   }
   if (target === 'columns') return [...UNDO, 'edit.copy', 'edit.paste', 'edit.delete', '-', COLORS];
@@ -373,7 +376,7 @@ export function editMenuItems(target: MenuTarget): string[] {
   if (target === 'rows') return ['table.deleteRows', 'insert.rowAbove', 'insert.rowBelow', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.delete'];
   if (target === 'columns' || target === 'column') {
     return dataTableFocused()
-      ? ['table.deleteColumns', 'insert.colBefore', 'insert.colAfter', 'table.renameColumn', 'edit.copy', 'edit.paste', 'edit.delete']
+      ? ['table.deleteColumns', 'insert.colBefore', 'insert.colAfter', 'table.renameColumn', 'table.fitColumns', 'edit.copy', 'edit.paste', 'edit.delete']
       : ['edit.copy', 'edit.paste', 'edit.delete'];
   }
   return ['edit.cut', 'edit.copy', 'edit.paste', 'edit.delete', 'insert.rowAbove', 'insert.rowBelow'];

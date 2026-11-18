@@ -1,7 +1,7 @@
 import { isErr, type CellValue, type Evaluator } from './evaluate';
 import { parseNumber } from './format';
-import { cellRaw, cellValue, matchCond, optionFor, parseCell } from './columns';
-import { newEntry, newRow, uid, type CashflowTable, type ColumnType, type Column, type DataTable, type Entry, type Table } from './model';
+import { cellDisplay, cellRaw, cellValue, matchCond, optionFor, parseCell } from './columns';
+import { newEntry, newRow, uid, type CashflowTable, type CellData, type ColumnType, type Column, type DataTable, type Entry, type Table } from './model';
 import type { MonthKey } from './months';
 
 /** Cell position inside a table. r: body rows, then footer rows. c: column. */
@@ -116,7 +116,62 @@ export function fitColumns(cols: ColFit[], avail: number): number[] {
 }
 
 export function columnWidth(c: Column): number {
-  return c.id === 'note' && c.type === 'text' ? 240 : TYPE_WIDTH[c.type];
+  return c.width ?? (c.id === 'note' && c.type === 'text' ? 240 : TYPE_WIDTH[c.type]);
+}
+
+export const MIN_COL_W = 40;
+
+/**
+ * What a column's contents need (pixels at 13px, cell padding included):
+ * `content` is the widest value on one line, `head` the header on one line and `head2` on two lines.
+ */
+export function measureColumn(col: Column, values: (CellData | undefined)[]): { content: number; head: number; head2: number } {
+  const head = textWidth(col.name, 20);
+  const head2 = Math.max(textWidth(col.name, 0) / 2 + 20, longestWord(col.name));
+  let content = 0;
+  const sample = values.length > 500 ? values.slice(0, 500) : values;
+  for (const v of sample) {
+    if (v === undefined) continue;
+    let w = 0;
+    if (col.type === 'checkbox') w = 34;
+    else if (col.type === 'select') w = textWidth(String(v), 16 + 16 + 30); // chip padding, cell padding, menu button
+    else if (col.type === 'files') {
+      w = (Array.isArray(v) ? v : []).reduce((s, a) => s + Math.min(150, textWidth(a.name, 30)) + 4, 16);
+    } else w = textWidth(cellDisplay(col, v));
+    if (w > content) content = w;
+  }
+  if (col.type === 'checkbox') content = Math.max(content, 34);
+  return { content: Math.ceil(content), head: Math.ceil(head), head2: Math.ceil(head2) };
+}
+
+/** Width of the longest unbreakable word (Latin words don't break; CJK breaks anywhere). */
+function longestWord(s: string): number {
+  return Math.max(0, ...s.split(/[\s\u2E80-\u9FFF]+/).filter(Boolean).map((w) => textWidth(w, 18)));
+}
+
+/** Fit Width to Content: the widest value or the header on one line, whichever is wider (text capped). */
+export function bestFitWidth(col: Column, values: (CellData | undefined)[]): number {
+  const m = measureColumn(col, values);
+  const cap = col.type === 'text' || col.type === 'files' ? 320 : 480;
+  return Math.max(MIN_COL_W, Math.min(cap, Math.max(m.content, m.head)));
+}
+
+/**
+ * Fill Window: how each column may grow or shrink. Numbers, dates, numbering, checkboxes and pop-ups never
+ * go below their content (their headers may take two lines); text and files give up width first, but not
+ * past about three lines for their longest value.
+ */
+export function fillSpec(col: Column, values: (CellData | undefined)[]): ColFit {
+  const m = measureColumn(col, values);
+  const wrap = col.type === 'text' || col.type === 'files';
+  const fitted = Math.max(MIN_COL_W, Math.min(wrap ? 320 : 480, Math.max(m.content, m.head)));
+  const natural = col.width ?? fitted;
+  if (!wrap) {
+    const min = Math.max(MIN_COL_W, m.content, m.head2);
+    return { natural: Math.max(natural, min), min, wrap: false };
+  }
+  const min = Math.min(natural, Math.max(80, m.head2, Math.ceil((m.content - 16) / 3) + 16));
+  return { natural, min, wrap: true };
 }
 
 export function styleKey(rowId: string, colKey: string): string {

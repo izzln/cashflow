@@ -309,6 +309,41 @@
     }
   }
 
+  // ----- resizing a Table column by its header's right edge -----
+  let resizing: { colId: string; x0: number; w0: number; moved: boolean } | null = null;
+
+  function onResizeDown(e: PointerEvent): boolean {
+    const h = (e.target as Element).closest<HTMLElement>('[data-colresize]');
+    if (!h || table.kind !== 'table' || e.button === 2) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    app.commitEdit();
+    const col = table.columns[Number(h.dataset.colresize)];
+    const th = h.closest('th');
+    if (!col || !th) return true;
+    resizing = { colId: col.id, x0: e.clientX, w0: th.getBoundingClientRect().width / scale(), moved: false };
+    window.addEventListener('pointermove', onResizeMove);
+    window.addEventListener('pointerup', onResizeUp, { once: true });
+    return true;
+  }
+
+  function onResizeMove(e: PointerEvent) {
+    const r = resizing;
+    if (!r) return;
+    if (!r.moved) {
+      if (Math.abs(e.clientX - r.x0) < 3) return;
+      r.moved = true;
+      app.checkpoint();
+    }
+    app.resizeColumn(table.id, r.colId, r.w0 + (e.clientX - r.x0) / scale());
+  }
+
+  function onResizeUp() {
+    window.removeEventListener('pointermove', onResizeMove);
+    if (resizing?.moved) app.save();
+    resizing = null;
+  }
+
   function onCellDown(e: PointerEvent) {
     // A header's filter button opens the row filter on that column.
     const fb = (e.target as Element).closest<HTMLElement>('[data-filter]');
@@ -319,6 +354,7 @@
       app.openFilter(table.id, fb.dataset.filter);
       return;
     }
+    if (onResizeDown(e)) return;
     if (onLineDown(e)) return;
     // A Pop-Up Menu cell's button opens its choices at once.
     if ((e.target as Element).closest('[data-pick]')) {
@@ -455,6 +491,13 @@
   }
 
   function onDblClick(e: MouseEvent) {
+    // Double-click a header's edge: fit the column to its contents.
+    const h = (e.target as Element).closest<HTMLElement>('[data-colresize]');
+    if (h && table.kind === 'table') {
+      const col = table.columns[Number(h.dataset.colresize)];
+      if (col) app.fitColumnWidths(table.id, [col.id]);
+      return;
+    }
     const p = posOf(e.target as Element);
     if (!p || (e.target as Element).closest('[data-check]')) return;
     app.select(table.id, p);

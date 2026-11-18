@@ -1,5 +1,6 @@
 {
-  "name": "cashflow-allseeing",
+  "name": "cashflow",
+  "description": "Cashflow: a cash-flow tracker and forecast in the browser, laid out like Apple Numbers.",
   "private": true,
   "version": "0.1.0",
   "type": "module",

@@ -1,7 +1,8 @@
-# Cashflow Allseeing
+# Cashflow
 
 A browser-based cash-flow tracker and forecast for company operations, laid out like Apple Numbers:
-sheets as tabs along the top, several tables per sheet placed on a canvas, months as columns.
+files shown as icons, sheets as tabs, several tables per sheet placed on a canvas, months as columns.
+It runs in Safari or Chrome on a Mac or an iPad, with nothing to install.
 
 ## Status
 
@@ -9,8 +10,10 @@ Two kinds of table sit on each sheet's canvas:
 - **Cashflow** — months as columns (current month → December next year). Rows are typed numbers,
   formulas, or numbers taken from a table. Footer rows: Net cash flow, Balance (carried forward from
   an opening balance, counting months that have scrolled out of view), plus custom formula rows.
-- **Table** — rows with typed columns: Date, Number, Text, Checkbox, Files. Typed in, pasted, or
-  imported from CSV / Excel (.xlsx; UTF-8 or GBK CSV; Chinese and English headers recognised).
+- **Table** — rows with typed columns: Date, Number (decimals, thousands separator), Text, Checkbox,
+  Files, Numbering (e.g. INV-0001, given once per row), Pop-Up Menu (choices with a default). Typed in,
+  pasted, or imported from CSV / Excel (.xlsx; UTF-8 or GBK CSV; Chinese and English headers recognised).
+  Conditional highlighting (cell or whole row), sort rules and row filters.
 
 **Taking numbers from a table**
 - A cashflow row's first cell → *From table*: each month = the amount column's total for rows dated
@@ -20,20 +23,20 @@ Two kinds of table sit on each sheet's canvas:
 - Formulas: `[Row]`, `[Table].[Row]`, `[Net cash flow]`, `[Balance]`, `PREV([x], n)`, `SUM MIN MAX
   ABS ROUND IF`; Chinese full-width input works. Errors show as `#ERR` with the reason
 
-**Interface** (follows the Stories Web App design system; see CLAUDE.md)
-- Top row: ‹ Files · file name (menu: Rename, Download a Copy, Take Snapshot, snapshots, All Files) and
-  save status · toolbar on the right — Cashflow, Table · rows and columns · Color (fill + text sets) ·
-  Fill Window, Zoom · Inspector. Narrow windows drop the labels, then move tools into a » menu.
-  Sheet tabs are on the row below
-- Mouse: click selects; double-click edits a cell, renames a table (title) or a column (header);
-  right-click menus on cells, titles and row/column tabs. Touch: tap selects and shows the edit menu
-  (Cut, Copy, Paste, Delete…, ••• for more); tap again to edit; long-press for the full menu
-- Row/column tabs on the selected table: select whole rows/columns (Shift extends; arrow keys move the
-  selection a row/column at a time), drag to reorder, drop on the canvas for a new table (⌥ copies)
-- Numbers shortcuts: ⌥↑/⌥↓ row above/below, ⌥←/⌥→ column before/after, ⌥⌘⌫ delete rows,
-  ⌘> / ⌘< zoom, ⌘Z / ⇧⌘Z, ⌥⌘I inspector, ⇧⌘S download, ⇧⌘O all files
-- Zoom 25 %–400 % (toolbar, ⌘> / ⌘<, pinch on trackpad or iPad). Row/column tabs stay full size
-- Fill Window shows one table across the workspace with header rows and first column pinned
+**Interface** (follows the Stories Web App design system, with the app's own decisions in CLAUDE.md)
+- Files page: file icons with a picture of each file's first sheet; click selects, double-click
+  (tap on iPad) opens, right-click or long-press for Open in New Window, Rename, Duplicate, Download,
+  Delete (undoable)
+- Top row: ‹ Files · file name (menu: Rename, Download a Copy, snapshots) and save status · toolbar —
+  Cashflow, Table · rows and columns · Format · Fill Window, Zoom · Inspector, Filter. Narrow windows
+  drop the labels, then move tools into a » menu. Sheet tabs below; drag to reorder, right-click for more
+- Every table starts with row numbers (select, drag to reorder, drag out for a new table); the header
+  row selects, moves, resizes and renames columns
+- Mouse: click selects, double-click edits, right-click menus. Touch (as in Numbers): tap selects, tap
+  the selection for the edit menu, double-tap edits, long-press for the full menu
+- Side panel: Inspector (Table / Cell) or Sort & Filter
+- Zoom 25 %–400 % per sheet; Fill Window shows one table across the workspace with headers pinned
+- Copy and paste with Numbers and Excel, keeping tints and alignment
 
 **Files, sync and server**
 - Each file holds its sheets, tables and snapshots; any number of windows can edit the same file and
