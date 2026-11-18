@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatWith, matchCond, numberingText, optionFor } from '../src/lib/columns';
-import { assignNumbers, dataTableModel, visibleEntries } from '../src/lib/grid';
+import { assignNumbers, bestFitWidth, dataTableModel, fillSpec, visibleEntries } from '../src/lib/grid';
 import { newDataTable, normalizeWorkbook, type Condition, type DataTable } from '../src/lib/model';
 
 const cond = (col: string, op: Condition['op'], value = '', value2 = ''): Condition => ({ id: 'k', col, op, value, value2 });
@@ -91,5 +91,29 @@ describe('conditions', () => {
     expect(t.highlights[0].target).toBe('row');
     expect(t.filter.on).toBe(true);
     expect(t.filter.rules[0].op).toBe('contains');
+  });
+});
+
+describe('column widths', () => {
+  it('fits columns to what they hold', () => {
+    const check = { id: 'k', name: '已支出', type: 'checkbox' as const };
+    const no = { id: 'n', name: '日志编号', type: 'numbering' as const, numbering: { parts: [{ id: 'a', kind: 'text' as const, text: 'F' }, { id: 'b', kind: 'seq' as const, digits: 4 }], start: 1 } };
+    const pop = { id: 'p', name: '支出银行', type: 'select' as const, options: [{ id: 'o', label: 'Z/中国建设银行' }] };
+    const note = { id: 't', name: 'Note', type: 'text' as const };
+    // Narrow columns stay narrow: about their header, not a fixed type width.
+    expect(bestFitWidth(check, [true, undefined])).toBeLessThan(70);
+    expect(bestFitWidth(no, [17, 16])).toBeLessThan(80);
+    // A pop-up fits its longest choice plus its menu button.
+    expect(bestFitWidth(pop, ['Z/中国建设银行'])).toBeGreaterThan(140);
+    // Text: Fill Window may shrink it, but not past about three lines of its longest value.
+    const long = 'x'.repeat(120);
+    const spec = fillSpec(note, [long]);
+    expect(spec.wrap).toBe(true);
+    expect(spec.min * 3).toBeGreaterThanOrEqual(120 * 7.6);
+    // Numbers never shrink below their content.
+    const amount = { id: 'a', name: 'Amount', type: 'number' as const };
+    const s2 = fillSpec(amount, [-91480]);
+    expect(s2.wrap).toBe(false);
+    expect(s2.min).toBeGreaterThanOrEqual(s2.natural - 1);
   });
 });

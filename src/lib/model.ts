@@ -100,6 +100,8 @@ export interface Column {
   id: string;
   name: string;
   type: ColumnType;
+  /** Width set by hand (dragging the header edge) or by Fit Width to Content; unset = the type's default. */
+  width?: number;
   /** number */
   format?: NumberFormat;
   /** numbering */
@@ -370,6 +372,7 @@ export function defaultNumbering(): Numbering {
 function normColumn(c: any): Column {
   const type = (COLUMN_TYPES.includes(c.type) ? c.type : 'text') as ColumnType;
   const col: Column = { id: c.id, name: str(c.name), type };
+  if (typeof c.width === 'number' && Number.isFinite(c.width)) col.width = Math.round(Math.max(40, Math.min(800, c.width)));
   if (c.format && typeof c.format === 'object') {
     const d = c.format.decimals;
     col.format = { decimals: typeof d === 'number' && d >= 0 && d <= 6 ? Math.round(d) : null, thousands: c.format.thousands !== false };

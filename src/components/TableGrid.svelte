@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { app, ROW_H, ROWTAB_W } from '../lib/store.svelte';
-  import { cellsInRanges, columnWidth, fitColumns, isFiltered, styleKey, textWidth, type ColFit } from '../lib/grid';
+  import { cellsInRanges, columnWidth, fillSpec, fitColumns, isFiltered, styleKey, textWidth, type ColFit } from '../lib/grid';
   import { cellDisplay, formatWith, matchCond } from '../lib/columns';
   import type { Attachment, DataTable, Entry } from '../lib/model';
   import { STYLE_BY_ID } from '../lib/styles';
@@ -49,17 +49,17 @@
   const widths = $derived.by(() => {
     app.version;
     if (!fitting) return table.columns.map(columnWidth);
-    const specs: ColFit[] = table.columns.map((col) => {
-      const natural = columnWidth(col);
-      if (col.type === 'text') return { natural, min: 80, wrap: true };
-      if (col.type === 'files') return { natural, min: 110, wrap: true };
-      let min = Math.max(56, textWidth(col.name));
-      if (col.type === 'date') min = Math.max(min, textWidth('2026-11-07'));
-      if (col.type === 'number') {
-        for (const e of rows) min = Math.max(min, textWidth(cellDisplay(col, e.cells[col.id])));
-        min = Math.max(min, textWidth(String(totals[table.columns.indexOf(col)] ?? '')));
+    // Each column's limits come from what it holds (and the total row), see fillSpec.
+    const specs: ColFit[] = table.columns.map((col, c) => {
+      const vals = rows.map((e) => e.cells[col.id]);
+      const spec = fillSpec(col, vals);
+      const total = totals[c];
+      if (col.type === 'number' && typeof total === 'number') {
+        const tw = textWidth(formatWith(total, col));
+        spec.min = Math.max(spec.min, tw);
+        spec.natural = Math.max(spec.natural, tw);
       }
-      return { natural: Math.max(natural, min), min, wrap: false };
+      return spec;
     });
     return fitColumns(specs, app.fillWidth - 2 - ROWTAB_W);
   });
@@ -127,9 +127,9 @@
           data-coltab={c}
           class="center coltab"
           class:on={onCols.has(c)}
-          class:wrap={wraps(c)}
+          class:wrap={fitting}
           title={app.readonly ? col.name : `${col.name} — click to select, drag to move, double-click to rename`}
-          ondblclick={() => renameColumn(col.id)}
+          ondblclick={(e) => !(e.target as Element).closest('[data-colresize]') && renameColumn(col.id)}
         >
           {#if renaming === col.id}
             <input
@@ -151,6 +151,8 @@
               <button class="filterbtn" class:active={filterCols.has(col.id)} data-filter={col.id} tabindex="-1"
                 title={filterCols.has(col.id) ? 'Filtered — change the filter' : 'Filter rows by this column'}
                 aria-label={`Filter by ${col.name}`}><Icon name="filter" size={14} /></button>
+              <!-- Drag to resize; double-click to fit the contents (Fit Width to Content). -->
+              <span class="colresize" data-colresize={c} aria-hidden="true" title="Drag to resize · double-click to fit"></span>
             {/if}
           {/if}
         </th>
@@ -262,9 +264,31 @@
     display: inline-flex;
     color: var(--accent);
   }
+  .colresize {
+    position: absolute;
+    top: 0;
+    right: -1px;
+    bottom: 0;
+    width: 7px;
+    cursor: col-resize;
+    touch-action: none;
+    z-index: 1;
+  }
+  .colresize:hover {
+    background: var(--accent);
+    opacity: 0.5;
+  }
+  @media (pointer: coarse) {
+    .colresize {
+      width: 14px;
+    }
+  }
+  .filterbtn {
+    margin-right: 6px;
+  }
   .pick {
     display: inline-block;
-    max-width: calc(100% - 14px);
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     vertical-align: middle;

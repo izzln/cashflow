@@ -53,6 +53,8 @@ import {
   columnWidth,
   assignNumbers,
   visibleEntries,
+  bestFitWidth,
+  MIN_COL_W,
   ALIGNABLE,
   styleKey,
   type GridModel,
@@ -862,6 +864,36 @@ class AppState {
     if (!t || this.readonly) return;
     t.x = snap(x);
     t.y = snap(y);
+  }
+
+  /**
+   * Set a Table column's width while its header edge is dragged (like moveTable: the caller takes a
+   * checkpoint before and saves after, so the whole drag is one undo step).
+   */
+  resizeColumn(tableId: string, colId: string, width: number) {
+    const t = this.table(tableId);
+    const col = t?.kind === 'table' ? t.columns.find((c) => c.id === colId) : undefined;
+    if (!col || this.readonly) return;
+    col.width = Math.round(Math.max(MIN_COL_W, Math.min(800, width)));
+  }
+
+  /** Fit Width to Content for some columns of a Table (all its rows, not only the shown ones). */
+  fitColumnWidths(tableId: string, colIds: string[]) {
+    const t = this.table(tableId);
+    if (t?.kind !== 'table' || this.readonly || !colIds.length) return;
+    this.change(() => {
+      for (const col of t.columns) {
+        if (colIds.includes(col.id)) col.width = bestFitWidth(col, t.entries.map((e) => e.cells[col.id]));
+      }
+    });
+  }
+
+  /** The columns of the focused Table that the selection touches. */
+  selectedColumnIds(): string[] {
+    const sel = this.selection;
+    const t = this.table(sel?.tableId);
+    if (!sel || t?.kind !== 'table') return [];
+    return [...new Set(cellsInRanges(sel.ranges).map((p) => t.columns[p.c]?.id).filter(Boolean))] as string[];
   }
 
   bringToFront(id: string) {

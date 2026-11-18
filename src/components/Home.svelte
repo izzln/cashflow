@@ -29,25 +29,8 @@
     void loadThumbs(files);
   }
 
-  // ----- icons (the default view, like Finder and Numbers) or a list -----
-  const VIEW_KEY = 'cashflow-allseeing.homeView';
+  // ----- file icons, like Finder and Numbers -----
   const THUMB_KEY = 'cashflow-allseeing.thumb.';
-  function readView(): 'icons' | 'list' {
-    try {
-      return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'icons';
-    } catch {
-      return 'icons';
-    }
-  }
-  let view = $state<'icons' | 'list'>(readView());
-  function setView(v: 'icons' | 'list') {
-    view = v;
-    try {
-      localStorage.setItem(VIEW_KEY, v);
-    } catch {
-      // Not remembered; fine.
-    }
-  }
 
   /** Each file's picture, drawn from its first sheet and cached on this device until the file changes. */
   let thumbs = $state<Record<string, string>>({});
@@ -162,7 +145,13 @@
     refresh();
   }
 
+  /** The file being opened: its icon shows it at once, and a spinner if loading takes a while. */
+  let openingId = $state<string | null>(null);
+
   function open(id: string) {
+    if (openingId) return; // already opening one
+    openingId = id;
+    selectedId = id;
     location.hash = `#/f/${id}`;
   }
 
@@ -302,20 +291,10 @@
     <p class="empty">No files yet. Create one, or import a downloaded file.</p>
   {/if}
 
-  {#if shown.length}
-    <div class="viewbar">
-      <div class="segmented" role="radiogroup" aria-label="View">
-        <button role="radio" aria-checked={view === 'icons'} class:on={view === 'icons'} onclick={() => setView('icons')}>Icons</button>
-        <button role="radio" aria-checked={view === 'list'} class:on={view === 'list'} onclick={() => setView('list')}>List</button>
-      </div>
-    </div>
-  {/if}
-
-  {#if view === 'icons'}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <ul class="icons" onclick={(e) => e.target === e.currentTarget && (selectedId = null)}>
       {#each shown as f (f.id)}
-        <li class="tile" class:sel={selectedId === f.id}>
+        <li class="tile" class:sel={selectedId === f.id} class:opening={openingId === f.id} aria-busy={openingId === f.id}>
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="hit" title={f.name}
             onpointerdown={(e) => tileDown(e, f)} onpointermove={tileMove} onpointerup={(e) => tileUp(e, f)}
@@ -324,6 +303,7 @@
             oncontextmenu={(e) => { e.preventDefault(); openFileMenu(f, e.clientX, e.clientY); }}>
             <div class="thumb">
               {#if thumbs[f.id]}{@html thumbs[f.id]}{/if}
+              {#if openingId === f.id}<span class="spinner" role="progressbar" aria-label="Opening"></span>{/if}
             </div>
             {#if renamingId === f.id}
               <input class="rename tilename" bind:this={renameEl} bind:value={draft} aria-label="File name"
@@ -342,34 +322,6 @@
         </li>
       {/each}
     </ul>
-  {:else}
-    <ul class="list">
-      {#each shown as f (f.id)}
-        <li oncontextmenu={(e) => { e.preventDefault(); openFileMenu(f, e.clientX, e.clientY); }}>
-          {#if renamingId === f.id}
-            <input class="rename" bind:this={renameEl} bind:value={draft} aria-label="File name"
-              onblur={() => finishRename(true)}
-              onkeydown={(e) => {
-                if (e.isComposing || e.keyCode === 229) return;
-                if (e.key === 'Enter') finishRename(true);
-                if (e.key === 'Escape') finishRename(false);
-              }} />
-          {:else}
-            <a class="name" href="#/f/{f.id}" ondblclick={(e) => { e.preventDefault(); startRename(f); }}>{f.name}</a>
-          {/if}
-          <span class="when">Edited {fmt.format(f.updatedAt)}</span>
-          <span class="buttons">
-            <a class="btn" href="#/f/{f.id}" target="_blank" rel="noopener" title="Open in a new window">New Window</a>
-            <button onclick={() => startRename(f)}>Rename…</button>
-            <button onclick={() => duplicate(f)}>Duplicate</button>
-            <button onclick={() => download(f)}>Download</button>
-            <button class="danger" onclick={() => remove(f)}>Delete</button>
-          </span>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-
   {#if fileMenu && lastMenu}
     {@const f = lastMenu.f}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
@@ -386,17 +338,6 @@
     </ul>
   {/if}
 
-  <p class="note">
-    {#if session.mode === 'remote'}
-      Files are saved on your server and show up on every device you sign in on. Download a file (it
-      includes its snapshots) to keep your own copy. Importing always creates a new file and never
-      overwrites one.
-    {:else}
-      Files are stored in this browser, so each device has its own list. Download a file (it includes
-      its snapshots) to move it to another device or keep a copy. Importing always creates a new file
-      and never overwrites one.
-    {/if}
-  </p>
 </main>
 <StatusBar />
 
@@ -428,31 +369,6 @@
     background: var(--accent);
     border-color: var(--accent);
     color: var(--on-accent);
-  }
-  .viewbar {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: 10px;
-  }
-  .segmented {
-    display: flex;
-  }
-  .segmented button {
-    border-radius: 0;
-    margin-left: -1px;
-  }
-  .segmented button:first-child {
-    border-radius: var(--radius-6) 0 0 var(--radius-6);
-    margin-left: 0;
-  }
-  .segmented button:last-child {
-    border-radius: 0 var(--radius-6) var(--radius-6) 0;
-  }
-  .segmented button.on {
-    background: var(--accent-soft);
-    border-color: var(--accent);
-    color: var(--accent);
-    position: relative;
   }
   /* Icon view (owner's decision, like Finder / Numbers): a page picture with the name below. */
   .icons {
@@ -585,57 +501,6 @@
     background: var(--line);
     margin: 4px 6px;
   }
-  .list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-10);
-  }
-  .list:empty {
-    display: none;
-  }
-  li {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px 14px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--line);
-  }
-  li:last-child {
-    border-bottom: none;
-  }
-  .name {
-    font-weight: 600;
-    font-size: 15px;
-    color: var(--text);
-    text-decoration: none;
-    flex: 1 1 200px;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .when {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    border: 1px solid var(--line);
-    background: var(--panel);
-    border-radius: var(--radius-6);
-    padding: 4px 10px;
-    min-height: var(--control-h);
-    color: inherit;
-    text-decoration: none;
-  }
   .banner {
     display: flex;
     flex-wrap: wrap;
@@ -649,6 +514,45 @@
     margin-bottom: 14px;
     line-height: 1.5;
   }
+  .empty {
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  /* Opening: the icon dims a little; the spinner shows only if it takes more than half a second. */
+  .thumb {
+    position: relative;
+  }
+  .tile.opening .thumb :global(svg) {
+    opacity: 0.6;
+  }
+  .spinner {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 24px;
+    height: 24px;
+    margin: -12px 0 0 -12px;
+    border-radius: 50%;
+    border: 2.5px solid var(--accent-soft);
+    border-top-color: var(--accent);
+    opacity: 0;
+    animation:
+      cf-fade-in var(--motion-base) var(--ease-enter) 500ms forwards,
+      spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: cf-fade-in var(--motion-base) var(--ease-enter) 500ms forwards;
+    }
+  }
+  .hit:active .thumb {
+    border-color: var(--accent);
+  }
   .error {
     color: var(--neg);
   }
@@ -659,14 +563,5 @@
     border: 1px solid var(--accent);
     border-radius: var(--radius-6);
     padding: 4px 8px;
-  }
-  .empty,
-  .note {
-    color: var(--muted);
-    line-height: 1.5;
-  }
-  .note {
-    margin-top: 16px;
-    font-size: 12px;
   }
 </style>

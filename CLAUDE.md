@@ -1,7 +1,10 @@
 # CLAUDE.md
 
-Cash-flow tracker/forecast web app: sheets of free-placed (grid-snapped) tables on a canvas, months as columns.
+**Cashflow** — a cash-flow tracker/forecast web app: sheets of free-placed (grid-snapped) tables on a canvas, months as columns.
 Single editor (the owner) on Mac + iPad; others will get view-only links (last phase).
+The repository, the Cloudflare Worker / D1 database and storage keys keep the old `cashflow-allseeing` name on
+purpose: renaming the Worker changes the web address and needs its secrets set again, and renaming keys or the
+export format would orphan saved files and settings.
 
 ## Names
 A **Cashflow** is the special month-by-month table (`CashflowTable`, `kind: 'cashflow'`). A **Table** is rows with
@@ -53,11 +56,12 @@ record the difference below as the owner's decision and mention it; don't edit t
   (Pop-Up Menu; cells hold the label; `newEntryFor` applies the default; `OptionsPopover` edits a cell).
   Settings UI: `ColumnFormat`, ordered lists via `ReorderList`.
 - Conditions (`Condition`, `matchCond` / `condOps` in `columns.ts`) drive both `highlights` (first match wins, over the
-  cell's own tint; `HighlightRules`) and the row filter `filter` (`FilterPopover`, `app.openFilter`).
+  cell's own tint; `HighlightRules`) and the row filter `filter` (`SortFilter`, `app.openFilter`).
 - **Home shows file icons (owner's decision, like Finder / Numbers; Stories' List is a list page):** a grid of page
   pictures (`thumbnailSVG` in `src/lib/thumbnail.ts`: the first sheet's tables as shapes, no text; cached per device by
   `updatedAt`) with the name below. Pointer: click selects, double-click opens; touch: tap opens; right-click /
-  long-press opens the file menu. A List view (the old list) is one segmented switch away, remembered per device.
+  long-press opens the file menu (the only place for Rename / Duplicate / Download / Delete). No list view, no
+  tips. Opening marks the icon at once and shows a spinner on it after 500ms.
 - New files start blank: one empty sheet, "Sheet 1" (`starterWorkbook`); an empty sheet shows a one-line hint.
 - **Side panel (owner's decision):** `app.panel` is 'inspector' | 'filter' | null. The Inspector has a Table / Cell
   segmented control (`app.inspectorTab`; Stories' Inspector stacks one section per level): Table = name, opening
@@ -65,6 +69,10 @@ record the difference below as the owner's decision and mention it; don't edit t
   text alignment. The toolbar's Filter button shows Sort & Filter in the same panel (`SortFilter`): sort rules
   (`DataTable.sort`, applied on change and with Sort Now; multi-key, stable) and the row filter. Structure edits
   (rows, columns, delete table) live in the toolbar and menus only.
+- **Column widths:** `Column.width` (drag the header's right edge — `onResizeDown` in TableFrame, one undo step —
+  or Fit Width to Content: double-click the edge / `table.fitColumns`, `bestFitWidth`). Unset = the type's default.
+  Fill Window sizes columns from their contents (`fillSpec`): non-text columns never go below their content
+  (headers may wrap to two lines); text and files give up width first but stay within about three lines.
 - **Filtered Tables:** `dataTableModel` and the grid work on the shown rows (`visibleEntries`); row index r means
   `app.viewItems(t)[r]`, never `t.entries[r]`. Row operations map shown rows to entry ids. Rows added while filtered
   stay shown (`keepRows`) until the filter changes. The Total row sums shown rows; cashflow sources ignore filters.
