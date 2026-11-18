@@ -2,9 +2,9 @@
 
 **Cashflow** — a cash-flow tracker/forecast web app: sheets of free-placed (grid-snapped) tables on a canvas, months as columns.
 Single editor (the owner) on Mac + iPad; others will get view-only links (last phase).
-The GitHub repository is `izzln/cashflow`. The Cloudflare Worker / D1 database and storage keys keep the old
-`cashflow-allseeing` name on purpose: renaming the Worker changes the web address and needs its secrets set again,
-and renaming keys or the export format would orphan saved files and settings.
+The GitHub repository is `izzln/cashflow`; the Worker is `cashflow` (https://cashflow.stories.workers.dev once the
+account's workers.dev subdomain is `stories`). The D1 database and browser storage keys keep the old
+`cashflow-allseeing` name on purpose: renaming keys or the export format would orphan saved files and settings.
 
 ## Names
 A **Cashflow** is the special month-by-month table (`CashflowTable`, `kind: 'cashflow'`). A **Table** is rows with

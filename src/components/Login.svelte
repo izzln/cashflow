@@ -23,7 +23,7 @@
     <h1>Cashflow</h1>
     {#if !session.configured}
       <p class="msg">
-        No password is set yet. In the Cloudflare dashboard, open the <b>cashflow-allseeing</b> Worker →
+        No password is set yet. In the Cloudflare dashboard, open the <b>cashflow</b> Worker →
         Settings → Variables and Secrets, add a <b>Secret</b> named <code>EDITOR_PASSWORD</code> (at least 8
         characters), deploy, then reload this page.
       </p>
