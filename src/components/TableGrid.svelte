@@ -267,10 +267,8 @@
   :global(th.coltab) {
     position: relative;
   }
-  @media (hover: hover) {
-    :global(th.coltab:hover) .filterbtn {
-      display: inline-flex;
-    }
+  :global(html[data-pointer='mouse'] th.coltab:hover) .filterbtn {
+    display: inline-flex;
   }
   .filterbtn.active {
     display: inline-flex;
@@ -331,14 +329,12 @@
   .pickbtn.shown {
     display: flex;
   }
-  @media (hover: hover) {
-    td.popup:hover .pickbtn {
-      display: flex;
-    }
-    .pickbtn:hover {
-      background: var(--accent-soft);
-      color: var(--accent);
-    }
+  :global(html[data-pointer='mouse']) td.popup:hover .pickbtn {
+    display: flex;
+  }
+  :global(html[data-pointer='mouse']) .pickbtn:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
   }
   @media (pointer: coarse) {
     td.popup {

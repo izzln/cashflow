@@ -156,7 +156,36 @@ async function writeClipboard(): Promise<boolean> {
  * Paste from the clipboard. iPad Safari asks with its own "Paste" bubble; when the browser refuses
  * (or the last copy never reached the system clipboard), paste this window's own last copy.
  */
+/** Files from the system clipboard (images, PDFs… copied in Finder, Files or another app). */
+async function clipboardFiles(): Promise<File[] | null> {
+  const items = await navigator.clipboard.read();
+  const out: File[] = [];
+  for (const item of items) {
+    const type = item.types.find((t) => !t.startsWith('text/') && t !== 'web text/html');
+    if (!type) continue;
+    const blob = await item.getType(type);
+    const ext = type.split('/')[1]?.replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '') || 'bin';
+    out.push(new File([blob], `Pasted ${type.startsWith('image/') ? 'image' : 'file'}.${ext}`, { type }));
+  }
+  return out;
+}
+
 async function pasteClipboard() {
+  // A files cell takes copied files, not text.
+  if (app.anchorFilesCell()) {
+    try {
+      const files = await clipboardFiles();
+      if (files?.length) {
+        app.pasteFiles(files);
+        return;
+      }
+      app.flashNotice('The clipboard holds no file to attach. Copy a file first, or drop it on the cell.', 'info');
+    } catch (e) {
+      const reason = (e as Error)?.name ?? '';
+      app.flashNotice(`Paste was blocked by the browser${reason ? ` (${reason})` : ''}. Use ${shortcutText({ key: 'v', mod: true })}, or drop the file on the cell.`);
+    }
+    return;
+  }
   const own = app.copiedText;
   if (own && !app.copyReachedSystem) return app.paste(own);
   let reason = '';
@@ -220,7 +249,7 @@ const list: Command[] = [
     }
     if (await writeClipboard()) app.clearSelected({ keepFiles: true });
   } },
-  { id: 'edit.copy', label: 'Copy', keys: { key: 'c', mod: true }, native: true, enabled: () => hasSel() || tableSelectedOnly(), run: async () => {
+  { id: 'edit.copy', label: 'Copy', keys: { key: 'c', mod: true }, native: true, enabled: () => tableSelectedOnly() || (hasSel() && app.selectionAllows().copy), run: async () => {
     selectWholeTable();
     await writeClipboard();
   } },
