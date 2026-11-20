@@ -211,21 +211,21 @@ const list: Command[] = [
   // Edit
   { id: 'edit.undo', label: 'Undo', keys: { key: 'z', mod: true }, enabled: () => app.canUndo, run: () => app.undo() },
   { id: 'edit.redo', label: 'Redo', keys: { key: 'z', mod: true, shift: true }, enabled: () => app.canRedo, run: () => app.redo() },
-  { id: 'edit.cut', label: 'Cut', keys: { key: 'x', mod: true }, native: true, enabled: () => editable() && (hasSel() || tableSelectedOnly()), run: async () => {
+  { id: 'edit.cut', label: 'Cut', keys: { key: 'x', mod: true }, native: true, enabled: () => editable() && (tableSelectedOnly() || (hasSel() && app.selectionAllows().cut)), run: async () => {
     if (tableSelectedOnly()) {
       const id = app.focusTableId!;
       selectWholeTable();
       if (await writeClipboard()) app.deleteTable(id);
       return;
     }
-    if (await writeClipboard()) app.clearSelected();
+    if (await writeClipboard()) app.clearSelected({ keepFiles: true });
   } },
   { id: 'edit.copy', label: 'Copy', keys: { key: 'c', mod: true }, native: true, enabled: () => hasSel() || tableSelectedOnly(), run: async () => {
     selectWholeTable();
     await writeClipboard();
   } },
-  { id: 'edit.paste', label: 'Paste', keys: { key: 'v', mod: true }, native: true, enabled: () => editable() && hasSel(), run: pasteClipboard },
-  { id: 'edit.delete', destructive: () => tableSelectedOnly(), label: () => (tableSelectedOnly() ? deleteTableLabel() : linesSelected() ? 'Clear' : 'Delete'), keys: { key: 'Backspace' }, enabled: () => editable() && (hasSel() || tableSelectedOnly()), run: () => {
+  { id: 'edit.paste', label: 'Paste', keys: { key: 'v', mod: true }, native: true, enabled: () => editable() && hasSel() && app.selectionAllows().paste, run: pasteClipboard },
+  { id: 'edit.delete', destructive: () => tableSelectedOnly(), label: () => (tableSelectedOnly() ? deleteTableLabel() : linesSelected() ? 'Clear' : 'Delete'), keys: { key: 'Backspace' }, enabled: () => editable() && (tableSelectedOnly() || (hasSel() && app.selectionAllows().clear)), run: () => {
     if (tableSelectedOnly()) app.deleteTable(app.focusTableId!);
     else app.clearSelected();
   } },

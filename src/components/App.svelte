@@ -144,7 +144,7 @@
 
   function onCut(e: ClipboardEvent) {
     onCopy(e);
-    if (e.defaultPrevented) app.clearSelected();
+    if (e.defaultPrevented) app.clearSelected({ keepFiles: true });
   }
 
   /** A paste event arrived for the last ⌘V (so the fallback in onKeydown stays idle). */

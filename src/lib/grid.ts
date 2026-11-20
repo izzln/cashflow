@@ -136,7 +136,9 @@ export function measureColumn(col: Column, values: (CellData | undefined)[]): { 
     if (col.type === 'checkbox') w = 34;
     else if (col.type === 'select') w = textWidth(String(v), 16 + 16 + 30); // chip padding, cell padding, menu button
     else if (col.type === 'files') {
-      w = (Array.isArray(v) ? v : []).reduce((s, a) => s + Math.min(150, textWidth(a.name, 30)) + 4, 16);
+      // Up to four previews (about 36px each), a "+n" count, and the files button.
+      const n = Array.isArray(v) ? v.length : 0;
+      w = Math.min(n, 4) * 36 + (n > 4 ? 24 : 0) + 16 + 30;
     } else w = textWidth(cellDisplay(col, v));
     if (w > content) content = w;
   }

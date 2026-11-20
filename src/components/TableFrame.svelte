@@ -856,6 +856,15 @@
     cursor: cell;
     touch-action: pan-x pan-y;
   }
+  /* The row under the pointer (pointer devices only); selected cells keep their own wash. */
+  @media (hover: hover) {
+    .body :global(tbody tr:hover td:not(.sel)) {
+      background-image: linear-gradient(var(--row-hover), var(--row-hover));
+    }
+    .body :global(tbody tr:hover th.rowtab:not(.on)) {
+      background-image: linear-gradient(var(--row-hover), var(--row-hover));
+    }
+  }
   .body :global(td.sel) {
     touch-action: none;
     background-image: linear-gradient(var(--accent-soft), var(--accent-soft));

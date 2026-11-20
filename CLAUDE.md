@@ -23,6 +23,8 @@ record the difference below as the owner's decision and mention it; don't edit t
 ### App-specific UI (not in the design system)
 - **Accent override (owner's decision):** the accent is green like Numbers — `--accent: #1b7a43`,
   `--accent-soft: rgba(27,122,67,.12)` (white on it 5.37:1; on its soft tint 4.55:1). Every other token is Stories'.
+  App-only token: `--row-hover` (accent at 5 %, lighter than the selection tint), the pointer-hover row tint
+  (`@media (hover: hover)` in TableFrame; selected cells keep the selection colour).
   Tokens live in `src/app.css`; components use `var(--…)`, never raw values.
 - Commands are defined once in `src/lib/commands.ts`; the toolbar's overflow order is `OVERFLOW_ORDER` in
   `src/components/Toolbar.svelte`.
@@ -47,6 +49,13 @@ record the difference below as the owner's decision and mention it; don't edit t
   (`aligns`, keyed like `styles`); ⌘{ ⌘| ⌘}, the Format popover, the Align submenu and the Inspector.
 - Deletes are undoable and show a notice with Undo. Files (Home) and snapshots (File menu, which also shows Undo
   in place) are removed for good only when the notice expires or the page/file closes.
+- Commands per cell type: `app.selectionAllows()` (clear / cut / paste). Context menus keep inapplicable items
+  listed but disabled; the touch EditMenu shows only enabled ones. Files cells can be copied and deleted, not cut
+  into or pasted into; Cut (`clearSelected({ keepFiles: true })`) leaves attachments in place.
+- Files cells: thumbnails (height follows the row) for images, a type tile (PDF, XLSX…) otherwise, up to 4 then +n,
+  and a paperclip button (`[data-pick]`) that opens FilesPopover. `src/lib/thumbs.svelte.ts`: `makeThumb` (64px
+  JPEG data URL stored as `Attachment.thumb` on upload, under 40 KB), `thumbFor` (stored thumb, else made once
+  from the bytes and cached in localStorage), `fileKind`.
 - Clipboard (Stories: Clipboard): `src/lib/clipboard.ts` (`toHTML` with `data-cf-s` / `data-cf-a`,
   `formatsFromHTML`), `execCopy` / `pasteClipboard` in `commands.ts`, ⌘C/⌘X/⌘V and the `before*` events in App,
   `app.copiedText` / `copyReachedSystem` for the in-window fallback.

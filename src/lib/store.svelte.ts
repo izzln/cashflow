@@ -63,6 +63,7 @@ import {
 } from './grid';
 import { SyncLoop } from './sync';
 import { attachmentStore } from './attachments';
+import { isImage, makeThumb } from './thumbs.svelte';
 import type { SheetData } from './import/xlsx';
 import { convertCell, firstColumnOf, newColumnId, COLUMN_TYPE_LABELS } from './columns';
 import { amountColumn } from './import/mapping';
@@ -1686,7 +1687,13 @@ class AppState {
     for (const [i, file] of files.entries()) {
       this.flashNotice(`Uploading ${i + 1} of ${files.length}: ${file.name}…`, 'info');
       try {
-        added.push(await attachmentStore.upload(f.id, file));
+        const a = await attachmentStore.upload(f.id, file);
+        // Images get a small preview for their cell, made here once and saved with the attachment.
+        if (isImage(a) || isImage(file)) {
+          const thumb = await makeThumb(file);
+          if (thumb) a.thumb = thumb;
+        }
+        added.push(a);
       } catch (e) {
         errors.push((e as Error).message);
       }
@@ -2034,12 +2041,38 @@ class AppState {
     return ok;
   }
 
-  clearSelected() {
+  /**
+   * What the selected cells allow: `clear` (some cell has content that Delete can remove), `cut` (some
+   * cell's content survives a copy, so not attachments), `paste` (the anchor cell takes typed values).
+   */
+  selectionAllows(): { clear: boolean; cut: boolean; paste: boolean } {
+    const sel = this.selection;
+    const t = this.table(sel?.tableId);
+    if (!sel || !t || this.readonly) return { clear: false, cut: false, paste: false };
+    const m = this.model(t);
+    let clear = false;
+    let cut = false;
+    for (const p of cellsInRanges(sel.ranges)) {
+      if (m.editable(p) !== true || m.isEmpty(p)) continue;
+      clear = true;
+      if (m.cellType(p) !== 'files') cut = true;
+      if (cut) break;
+    }
+    const a = sel.anchor;
+    const kind = m.cellType(a);
+    const paste = m.editable(a) === true && kind !== 'files';
+    return { clear, cut, paste };
+  }
+
+  /** Clear the selected cells. A cut keeps attachments: only their names reach the clipboard. */
+  clearSelected(opts: { keepFiles?: boolean } = {}) {
     const sel = this.selection;
     const t = this.table(sel?.tableId);
     if (!sel || !t || this.readonly) return;
     const m = this.model(t);
-    const cells = cellsInRanges(sel.ranges).filter((p) => m.editable(p) === true && !m.isEmpty(p));
+    const cells = cellsInRanges(sel.ranges).filter(
+      (p) => m.editable(p) === true && !m.isEmpty(p) && !(opts.keepFiles && m.cellType(p) === 'files'),
+    );
     if (cells.length === 0) return;
     this.change(() => {
       for (const p of cells) {
