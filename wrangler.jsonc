@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "cashflow-allseeing",
+  "name": "cashflow",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
   // The built app is bundled into the Worker (scripts/embed-assets.mjs), which serves it and /api.
@@ -13,6 +13,8 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Never remove variables set in the dashboard on deploy (EDITOR_PASSWORD belongs there, as a Secret).
+  "keep_vars": true,
   // Only the main workers.dev address; no per-version preview addresses.
   "workers_dev": true,
   "preview_urls": false,

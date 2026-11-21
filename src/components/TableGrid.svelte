@@ -6,6 +6,7 @@
   import type { Attachment, DataTable, Entry } from '../lib/model';
   import { STYLE_BY_ID } from '../lib/styles';
   import Icon from './Icon.svelte';
+  import { fileKind, thumbFor } from '../lib/thumbs.svelte';
 
   let { table }: { table: DataTable } = $props();
 
@@ -175,7 +176,7 @@
             class:wrap={wraps(c)}
             class:neg={col.type === 'number' && typeof v === 'number' && v < 0 && !table.styles[styleKey(e.id, col.id)] && !hl.get(e.id)?.[col.id]}
             class:numbered={col.type === 'numbering'}
-            class:popup={col.type === 'select'}
+            class:popup={col.type === 'select' || col.type === 'files'}
             class:sel={selected.has(`${r},${c}`)}
             class:anchor={anchor(r, c)}
             data-files={col.type === 'files' ? '' : undefined}
@@ -199,7 +200,18 @@
             {#if col.type === 'checkbox'}
               <span class="check" class:on={v === true} data-check role="checkbox" aria-checked={v === true} aria-label={col.name}>{v === true ? '✓' : ''}</span>
             {:else if col.type === 'files'}
-              {#each files(v) as f (f.id)}<span class="chip" title={f.name}><Icon name="clip" size={12} /> {f.name}</span>{/each}
+              <!-- Previews at row height: image thumbnails, or a type tile (PDF, XLSX…); the name is the tooltip. -->
+              <span class="thumbs">
+                {#each files(v).slice(0, 4) as f (f.id)}
+                  {@const src = thumbFor(app.file?.id, f)}
+                  {#if src}<img class="fthumb" {src} alt={f.name} title={f.name} draggable="false" />{:else}<span class="ftile" title={f.name}>{fileKind(f.name)}</span>{/if}
+                {/each}
+                {#if files(v).length > 4}<span class="fmore" title={files(v).slice(4).map((f) => f.name).join(', ')}>+{files(v).length - 4}</span>{/if}
+              </span>
+              {#if !app.readonly}
+                <!-- Opens the files panel (attach, open, remove) with one click or tap. -->
+                <span class="pickbtn" class:shown={anchor(r, c)} data-pick role="button" tabindex="-1" aria-label={`Files in ${col.name}`} title="Attach or open files"><Icon name="clip" size={14} /></span>
+              {/if}
             {:else if col.type === 'select'}
               {#if v !== undefined}<span class="pick">{v}</span>{/if}
               {#if !app.readonly}
@@ -255,10 +267,8 @@
   :global(th.coltab) {
     position: relative;
   }
-  @media (hover: hover) {
-    :global(th.coltab:hover) .filterbtn {
-      display: inline-flex;
-    }
+  :global(html[data-pointer='mouse'] th.coltab:hover) .filterbtn {
+    display: inline-flex;
   }
   .filterbtn.active {
     display: inline-flex;
@@ -319,14 +329,12 @@
   .pickbtn.shown {
     display: flex;
   }
-  @media (hover: hover) {
-    td.popup:hover .pickbtn {
-      display: flex;
-    }
-    .pickbtn:hover {
-      background: var(--accent-soft);
-      color: var(--accent);
-    }
+  :global(html[data-pointer='mouse']) td.popup:hover .pickbtn {
+    display: flex;
+  }
+  :global(html[data-pointer='mouse']) .pickbtn:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
   }
   @media (pointer: coarse) {
     td.popup {
@@ -377,17 +385,45 @@
     outline: 2px dashed var(--accent);
     outline-offset: -3px;
   }
-  .chip {
-    display: inline-block;
-    max-width: 150px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .thumbs {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     vertical-align: middle;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  /* Height follows the row: the row height less the cell's breathing room. */
+  .fthumb {
+    height: calc(var(--row-h) - 8px);
+    width: auto;
+    max-width: calc((var(--row-h) - 8px) * 2.5);
+    object-fit: cover;
+    border-radius: var(--radius-4);
+    border: 1px solid var(--line);
+    background: var(--panel);
+    flex-shrink: 0;
+    -webkit-user-drag: none;
+  }
+  .ftile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: calc(var(--row-h) - 8px);
+    min-width: calc((var(--row-h) - 8px) * 1.4);
+    padding: 0 4px;
+    border-radius: var(--radius-4);
+    border: 1px solid var(--line);
     background: var(--head);
-    border-radius: var(--radius-10);
-    padding: 0 7px;
-    margin-right: 4px;
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+  }
+  .fmore {
+    color: var(--muted);
     font-size: 12px;
-    line-height: 20px;
+    flex-shrink: 0;
   }
 </style>

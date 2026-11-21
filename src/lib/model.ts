@@ -157,6 +157,8 @@ export interface Attachment {
   name: string;
   size: number;
   type: string;
+  /** Images: a small JPEG preview (data URL, 64px tall) made when the file was attached. */
+  thumb?: string;
 }
 
 /** date: 'YYYY-MM-DD'; number; text; checkbox: boolean; files: list. A missing key is an empty cell. */
@@ -425,7 +427,11 @@ function normCell(type: ColumnType, v: unknown): CellData | undefined {
       return Array.isArray(v) && v.length
         ? v
             .filter((a) => a && typeof a.id === 'string')
-            .map((a) => ({ id: a.id, name: str(a.name, 'file'), size: num(a.size), type: str(a.type) }))
+            .map((a) => {
+              const out: Attachment = { id: a.id, name: str(a.name, 'file'), size: num(a.size), type: str(a.type) };
+              if (typeof a.thumb === 'string' && a.thumb.startsWith('data:image/') && a.thumb.length < 40000) out.thumb = a.thumb;
+              return out;
+            })
         : undefined;
     default:
       return typeof v === 'string' && v !== '' ? v : undefined;

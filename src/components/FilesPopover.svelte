@@ -2,6 +2,7 @@
   import { app } from '../lib/store.svelte';
   import { formatSize } from '../lib/attachments';
   import Icon from './Icon.svelte';
+  import { fileKind, thumbFor } from '../lib/thumbs.svelte';
   import { fadeOut } from '../lib/motion';
 
   const target = $derived(app.filesCell);
@@ -86,8 +87,12 @@
     {/if}
     <ul>
       {#each list as a (a.id)}
+        {@const src = thumbFor(app.file?.id, a)}
         <li>
-          <button class="name" onclick={() => app.openAttachment(a)} title="Open"><Icon name="clip" size={14} /> {a.name}</button>
+          <button class="name" onclick={() => app.openAttachment(a)} title="Open">
+            {#if src}<img class="pthumb" {src} alt="" />{:else}<span class="ptile">{fileKind(a.name)}</span>{/if}
+            <span class="pname">{a.name}</span>
+          </button>
           <span class="size">{formatSize(a.size)}</span>
           <button class="icon" onclick={() => app.openAttachment(a, true)} title="Download" aria-label={`Download ${a.name}`}>⤓</button>
           {#if !app.readonly}
@@ -177,6 +182,39 @@
     white-space: nowrap;
     color: var(--accent);
     min-height: 36px;
+  }
+  .name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pthumb,
+  .ptile {
+    height: 28px;
+    flex-shrink: 0;
+    border-radius: var(--radius-4);
+    border: 1px solid var(--line);
+  }
+  .pthumb {
+    width: auto;
+    max-width: 56px;
+    object-fit: cover;
+  }
+  .ptile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    padding: 0 4px;
+    background: var(--head);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .pname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .size {
     color: var(--muted);

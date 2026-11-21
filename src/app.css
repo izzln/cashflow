@@ -8,6 +8,8 @@
   --muted: #6a737d;
   --accent: #1b7a43;
   --accent-soft: rgba(27, 122, 67, 0.12);
+  /* App-specific: the row under the pointer, lighter than a selection (accent-soft is 0.12). */
+  --row-hover: rgba(27, 122, 67, 0.05);
   --on-accent: #ffffff;
   --on-accent-muted: rgba(255, 255, 255, 0.85);
   --neg: #c4322b;

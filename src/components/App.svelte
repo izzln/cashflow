@@ -144,7 +144,7 @@
 
   function onCut(e: ClipboardEvent) {
     onCopy(e);
-    if (e.defaultPrevented) app.clearSelected();
+    if (e.defaultPrevented) app.clearSelected({ keepFiles: true });
   }
 
   /** A paste event arrived for the last ⌘V (so the fallback in onKeydown stays idle). */
@@ -153,6 +153,18 @@
   function onPaste(e: ClipboardEvent) {
     pasteSeen = true;
     if (view !== 'file' || inField(e) || !app.selection) return;
+    // Files copied in Finder (or Files on iPad) attach to a files cell.
+    if (app.anchorFilesCell()) {
+      e.preventDefault();
+      const files = [...(e.clipboardData?.files ?? [])];
+      const named = e.clipboardData?.getData('text/plain').trim() ?? '';
+      // Some browsers hand over only the copied file's icon (a PNG) with its real name as text.
+      if (files.length === 1 && /^image\.png$/i.test(files[0].name) && named && !/\.png$/i.test(named)) {
+        app.flashNotice(`This browser pasted only the icon of “${named}”. Drag the file onto the cell instead.`);
+      } else if (files.length) app.pasteFiles(files);
+      else app.flashNotice('The clipboard holds no file to attach. Copy a file first, or drop it on the cell.', 'info');
+      return;
+    }
     const text = e.clipboardData?.getData('text/plain');
     if (!text) return;
     e.preventDefault();
@@ -209,6 +221,17 @@
       const covered = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
       document.documentElement.style.setProperty('--kb-inset', `${Math.round(covered)}px`);
     };
+    // Hover effects follow the pointer actually in use, not the device class: iPadOS reports
+    // (hover: none) even with a trackpad, whose pointer events arrive as 'mouse'. A touch turns
+    // them off again so a tapped row never keeps a hover tint.
+    const html = document.documentElement;
+    html.dataset.pointer = matchMedia('(hover: hover)').matches ? 'mouse' : 'touch';
+    const onPointer = (e: PointerEvent) => {
+      const kind = e.pointerType === 'touch' ? 'touch' : 'mouse';
+      if (html.dataset.pointer !== kind) html.dataset.pointer = kind;
+    };
+    window.addEventListener('pointermove', onPointer, { capture: true, passive: true });
+    window.addEventListener('pointerdown', onPointer, { capture: true, passive: true });
     vv?.addEventListener('resize', onViewport);
     vv?.addEventListener('scroll', onViewport);
     window.addEventListener('keydown', onTab);
@@ -242,6 +265,8 @@
     });
     return () => {
       ro.disconnect();
+      window.removeEventListener('pointermove', onPointer, { capture: true });
+      window.removeEventListener('pointerdown', onPointer, { capture: true });
       vv?.removeEventListener('resize', onViewport);
       vv?.removeEventListener('scroll', onViewport);
       window.removeEventListener('keydown', onTab);

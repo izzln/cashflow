@@ -63,6 +63,7 @@ import {
 } from './grid';
 import { SyncLoop } from './sync';
 import { attachmentStore } from './attachments';
+import { hasPreview, makeThumb } from './thumbs.svelte';
 import type { SheetData } from './import/xlsx';
 import { convertCell, firstColumnOf, newColumnId, COLUMN_TYPE_LABELS } from './columns';
 import { amountColumn } from './import/mapping';
@@ -1686,7 +1687,13 @@ class AppState {
     for (const [i, file] of files.entries()) {
       this.flashNotice(`Uploading ${i + 1} of ${files.length}: ${file.name}…`, 'info');
       try {
-        added.push(await attachmentStore.upload(f.id, file));
+        const a = await attachmentStore.upload(f.id, file);
+        // Images and PDFs get a small preview for their cell, made here once and saved with the attachment.
+        if (hasPreview(a) || hasPreview(file)) {
+          const thumb = await makeThumb(file, hasPreview(a) ? a : file);
+          if (thumb) a.thumb = thumb;
+        }
+        added.push(a);
       } catch (e) {
         errors.push((e as Error).message);
       }
@@ -2034,12 +2041,60 @@ class AppState {
     return ok;
   }
 
-  clearSelected() {
+  /**
+   * What the selected cells allow: `clear` (some cell has content that Delete can remove), `cut` (some
+   * cell's content survives a copy, so not attachments), `paste` (the anchor cell takes typed values).
+   */
+  selectionAllows(): { copy: boolean; clear: boolean; cut: boolean; paste: boolean } {
+    const sel = this.selection;
+    const t = this.table(sel?.tableId);
+    if (!sel || !t) return { copy: false, clear: false, cut: false, paste: false };
+    const m = this.model(t);
+    // Files cells carry no text worth copying: Copy needs at least one other cell.
+    let copy = false;
+    let clear = false;
+    let cut = false;
+    for (const p of cellsInRanges(sel.ranges)) {
+      const files = m.cellType(p) === 'files';
+      if (!files) copy = true;
+      if (!this.readonly && m.editable(p) === true && !m.isEmpty(p)) {
+        clear = true;
+        if (!files) cut = true;
+      }
+      if (copy && cut) break;
+    }
+    // Paste puts text into ordinary cells, or attaches copied files to a files cell.
+    const paste = !this.readonly && m.editable(sel.anchor) === true;
+    return { copy, clear, cut, paste };
+  }
+
+  /** The files cell at the selection's anchor, if it is one (where pasted or dropped files go). */
+  anchorFilesCell(): { tableId: string; rowId: string; colId: string } | null {
+    const sel = this.selection;
+    const t = this.table(sel?.tableId);
+    if (!sel || !t || t.kind !== 'table' || this.readonly) return null;
+    const m = this.model(t);
+    if (m.cellType(sel.anchor) !== 'files' || m.editable(sel.anchor) !== true) return null;
+    return { tableId: t.id, rowId: m.rowId(sel.anchor.r), colId: m.colKey(sel.anchor.c) };
+  }
+
+  /** Attach pasted files to the files cell at the anchor. Returns false when the anchor isn't one. */
+  pasteFiles(files: File[]): boolean {
+    const at = this.anchorFilesCell();
+    if (!at || !files.length) return false;
+    void this.attachFiles(at.tableId, at.rowId, at.colId, files);
+    return true;
+  }
+
+  /** Clear the selected cells. A cut keeps attachments: only their names reach the clipboard. */
+  clearSelected(opts: { keepFiles?: boolean } = {}) {
     const sel = this.selection;
     const t = this.table(sel?.tableId);
     if (!sel || !t || this.readonly) return;
     const m = this.model(t);
-    const cells = cellsInRanges(sel.ranges).filter((p) => m.editable(p) === true && !m.isEmpty(p));
+    const cells = cellsInRanges(sel.ranges).filter(
+      (p) => m.editable(p) === true && !m.isEmpty(p) && !(opts.keepFiles && m.cellType(p) === 'files'),
+    );
     if (cells.length === 0) return;
     this.change(() => {
       for (const p of cells) {
@@ -2133,7 +2188,8 @@ class AppState {
       const b: string[] = [];
       const f: CellFormat[] = [];
       for (let c = c0; c <= c1; c++) {
-        const v = m.value({ r, c });
+        // Files cells copy as blanks: the attachments stay where they are.
+        const v = m.cellType({ r, c }) === 'files' ? null : m.value({ r, c });
         a.push(v === null ? '' : String(v));
         b.push(typeof v === 'number' ? formatNumber(v) : v === null ? '' : v);
         const k = styleKey(m.rowId(r), m.colKey(c));

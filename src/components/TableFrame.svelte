@@ -856,6 +856,11 @@
     cursor: cell;
     touch-action: pan-x pan-y;
   }
+  /* The row under a mouse or trackpad pointer (App sets data-pointer); selected cells keep their own wash. */
+  :global(html[data-pointer='mouse']) .body :global(tbody tr:hover td:not(.sel)),
+  :global(html[data-pointer='mouse']) .body :global(tbody tr:hover th.rowtab:not(.on)) {
+    background-image: linear-gradient(var(--row-hover), var(--row-hover));
+  }
   .body :global(td.sel) {
     touch-action: none;
     background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
