@@ -27,6 +27,6 @@
     "wrangler": "4.151.3"
   },
   "dependencies": {
-    "pdfjs-dist": "^6.5.438"
+    "pdfjs-dist": "6.5.438"
   }
 }
